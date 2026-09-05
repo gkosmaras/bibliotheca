@@ -1,0 +1,336 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#F2F3F1" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0F1113" media="(prefers-color-scheme: dark)">
+<meta name="robots" content="noindex, nofollow">
+<meta name="description" content="A private library.">
+<title>Bibliotheca</title>
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon.svg">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="preload" href="fonts/literata-400-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="fonts.css">
+<link rel="stylesheet" href="app.css">
+</head>
+<body class="gated">
+
+<!-- ══ the door ═══════════════════════════════════════════════════════ -->
+<div class="gate" id="gate">
+  <div class="gate-card">
+
+    <div class="gate-brand">
+      <h1>Bibliotheca</h1>
+      <p class="gate-sub" id="cfgWhere">a private library</p>
+    </div>
+
+    <!-- opening -->
+    <div id="gate-loading">
+      <p class="gate-note">Opening the shelf…</p>
+      <div class="spinner" aria-hidden="true"></div>
+    </div>
+
+    <!-- unlock -->
+    <form id="gate-unlock" hidden>
+      <label class="field">
+        <span>Password</span>
+        <div class="pw-wrap">
+          <input type="password" id="pw" autocomplete="current-password" autocapitalize="off"
+                 autocorrect="off" spellcheck="false" required>
+          <button type="button" class="peek" data-peek="pw" aria-pressed="false" aria-label="Show password">👁</button>
+        </div>
+      </label>
+      <label class="toggle"><input type="checkbox" id="rememberMe"> Stay unlocked on this device</label>
+      <div class="gate-msg" id="unlockMsg" hidden></div>
+      <button class="btn primary block" id="btnUnlock" type="submit">Unlock</button>
+      <p class="gate-fine">The books are decrypted here, in this browser. GitHub only ever holds the sealed file.</p>
+    </form>
+
+    <!-- first run -->
+    <form id="gate-setup" hidden>
+      <p class="gate-note">
+        Nothing is in this repository yet. Three things set it up once, and every
+        device after this needs only the password.
+      </p>
+
+      <label class="field">
+        <span>1 · GitHub token</span>
+        <div class="pw-wrap">
+          <input type="password" id="token" autocomplete="off" autocapitalize="off"
+                 autocorrect="off" spellcheck="false" placeholder="github_pat_…" required>
+          <button type="button" class="peek" data-peek="token" aria-pressed="false" aria-label="Show token">👁</button>
+        </div>
+        <small>A fine-grained token with <b>Contents: Read and write</b> on this one repository.
+          <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">Make one →</a>
+          It gets encrypted with your password before it's stored, and is never sent anywhere but GitHub.</small>
+      </label>
+
+      <label class="field">
+        <span>2 · Password</span>
+        <div class="pw-wrap">
+          <input type="password" id="pw1" autocomplete="new-password" autocapitalize="off"
+                 autocorrect="off" spellcheck="false" required minlength="12">
+          <button type="button" class="peek" data-peek="pw1" aria-pressed="false" aria-label="Show password">👁</button>
+        </div>
+        <div class="pw-meter s0" id="pwMeter"><div class="pw-bar"><i></i></div><span class="pw-label"></span></div>
+      </label>
+      <label class="field">
+        <span>Password again</span>
+        <input type="password" id="pw2" autocomplete="new-password" autocapitalize="off"
+               autocorrect="off" spellcheck="false" required minlength="12">
+        <small>
+          <button type="button" class="linky" id="btnGenPw">Generate a strong passphrase</button> —
+          there is no reset. Lose this and the books are unreadable.
+        </small>
+      </label>
+
+      <label class="field">
+        <span>3 · Your books</span>
+        <input type="file" id="seedFile" accept=".json">
+        <small>Pick <code>Bibliothecabackup.json</code> to bring the shelf across, or leave it blank to start empty.</small>
+        <div class="gate-msg" id="seedNote" hidden></div>
+      </label>
+
+      <label class="toggle"><input type="checkbox" id="rememberSetup"> Stay unlocked on this device</label>
+      <div class="gate-msg" id="setupMsg" hidden></div>
+      <button class="btn primary block" id="btnSetup" type="submit">Create the library</button>
+    </form>
+
+    <!-- where does this live -->
+    <form id="gate-config" hidden>
+      <p class="gate-note">Tell me which repository holds the library.</p>
+      <label class="field"><span>GitHub username</span>
+        <input type="text" id="cfgOwner" autocapitalize="off" spellcheck="false" required></label>
+      <label class="field"><span>Repository</span>
+        <input type="text" id="cfgRepo" autocapitalize="off" spellcheck="false" required></label>
+      <label class="field"><span>Branch</span>
+        <input type="text" id="cfgBranch" autocapitalize="off" spellcheck="false" value="main"></label>
+      <button class="btn primary block" type="submit">Continue</button>
+    </form>
+
+    <!-- something went wrong -->
+    <div id="gate-fail" hidden>
+      <div class="gate-msg bad" id="failMsg"></div>
+      <button class="btn block" onclick="location.reload()">Try again</button>
+    </div>
+
+  </div>
+</div>
+
+<!-- ══ the shelf ══════════════════════════════════════════════════════ -->
+<div class="shell">
+  <nav class="rail">
+    <div class="brand">
+      <h1>Bibliotheca</h1>
+      <div class="sub" id="brandSub">personal library</div>
+    </div>
+
+    <div class="nav" role="tablist">
+      <button data-view="library" aria-current="true" role="tab"><span class="lbl">Library</span> <span class="count mono" id="navLibrary">—</span></button>
+      <button data-view="insights" role="tab"><span class="lbl">Insights</span> <span class="count mono" id="navInsights">—</span></button>
+      <button data-view="checks" role="tab"><span class="lbl">Checks</span> <span class="count mono" id="navChecks">—</span></button>
+      <button data-view="categories" role="tab"><span class="lbl">Categories</span> <span class="count mono" id="navCats">—</span></button>
+    </div>
+
+    <div class="rail-foot">
+      <div class="eyebrow" style="padding: 0 6px 2px;">Data</div>
+      <div class="datamenu">
+        <button class="btn sm" id="btnXlsx">Excel</button>
+        <button class="btn sm" id="btnCsv">CSV</button>
+        <button class="btn sm" id="btnJson">Backup</button>
+        <button class="btn sm" id="btnImport">Import…</button>
+      </div>
+      <button class="storage" id="btnSettings" title="Storage and password settings">
+        <span class="dot" id="storeDot"></span><span id="storeLabel">connecting…</span>
+      </button>
+      <input type="file" id="fileInput" accept=".xlsx,.xls,.csv,.json" hidden>
+    </div>
+  </nav>
+
+  <main class="main">
+    <div class="topbar">
+      <div class="topline">
+        <h2 id="viewTitle">Library</h2>
+        <span class="meta" id="viewMeta">loading…</span>
+        <span class="spacer"></span>
+        <button class="btn primary" id="btnAdd">Add book</button>
+      </div>
+
+      <div class="controls" id="libControls">
+        <div class="search">
+          <span aria-hidden="true" style="color:var(--ink-3)">⌕</span>
+          <input type="search" id="q" placeholder="Search titles, authors, notes…" aria-label="Search the library">
+          <kbd>/</kbd>
+        </div>
+        <select class="sel" id="fLang" aria-label="Filter by language"><option value="">All languages</option></select>
+        <select class="sel" id="fRead" aria-label="Filter by read state">
+          <option value="">Read &amp; unread</option>
+          <option value="yes">Read</option>
+          <option value="no">Unread</option>
+          <option value="rated">Rated</option>
+          <option value="unrated">Unrated</option>
+        </select>
+        <label class="toggle"><input type="checkbox" id="tint" checked> Tint rows</label>
+      </div>
+      <div class="filterbar" id="catFilters"></div>
+    </div>
+
+    <!-- LIBRARY -->
+    <section class="view" id="view-library">
+      <div class="ledger">
+        <div class="ledger-head">
+          <button data-sort="title">Title <span class="arrow" data-arrow="title"></span></button>
+          <button data-sort="author">Author <span class="arrow" data-arrow="author"></span></button>
+          <button data-sort="category">Category <span class="arrow" data-arrow="category"></span></button>
+          <button data-sort="language">Language <span class="arrow" data-arrow="language"></span></button>
+          <button data-sort="rating">Rating <span class="arrow" data-arrow="rating"></span></button>
+          <button data-sort="read" title="Read">✓</button>
+        </div>
+        <div id="rows"></div>
+      </div>
+    </section>
+
+    <!-- INSIGHTS -->
+    <section class="view" id="view-insights" hidden>
+      <div class="tiles" id="tiles"></div>
+      <div class="panels" id="panels"></div>
+    </section>
+
+    <!-- CHECKS -->
+    <section class="view" id="view-checks" hidden>
+      <div class="checks" id="checks"></div>
+    </section>
+
+    <!-- CATEGORIES -->
+    <section class="view" id="view-categories" hidden>
+      <div class="cats" id="cats"></div>
+      <div style="margin-top:14px; display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+        <button class="btn" id="btnAddCat">Add category</button>
+        <span class="meta mono" style="color:var(--ink-3); font-size:11.5px;" id="catsMeta"></span>
+      </div>
+    </section>
+  </main>
+</div>
+
+<button class="fab" id="btnAddFab" aria-label="Add book">＋</button>
+
+<div class="scrim" id="scrim"></div>
+
+<!-- ══ book editor ════════════════════════════════════════════════════ -->
+<aside class="drawer" id="drawer" aria-hidden="true" aria-label="Book details">
+  <header>
+    <h3 id="drawerTitle">Add book</h3>
+    <button class="btn ghost sm" id="drawerClose" aria-label="Close">✕</button>
+  </header>
+  <div class="body">
+    <div class="field">
+      <label for="fTitle">Title</label>
+      <input type="text" id="fTitle" autocomplete="off">
+    </div>
+    <div class="field">
+      <label for="fAuthor">Author</label>
+      <input type="text" id="fAuthor" list="authorList" autocomplete="off">
+      <datalist id="authorList"></datalist>
+    </div>
+    <div class="field">
+      <label for="fCat">Category</label>
+      <select id="fCat"></select>
+      <div class="hint" id="catHint" hidden></div>
+      <button class="btn sm" id="btnSuggest" style="align-self:flex-start; margin-top:2px;">Suggest category</button>
+    </div>
+    <div class="field row2">
+      <div class="field">
+        <label for="fLangIn">Language</label>
+        <input type="text" id="fLangIn" list="langList" autocomplete="off">
+        <datalist id="langList"></datalist>
+      </div>
+      <div class="field">
+        <label>Rating</label>
+        <div class="stars big" id="fStars"></div>
+      </div>
+    </div>
+    <div class="field">
+      <label class="toggle" style="text-transform:none; letter-spacing:0; font-family:var(--sans); font-size:13px; color:var(--ink);">
+        <input type="checkbox" id="fRead2"> Read
+      </label>
+    </div>
+    <div class="field">
+      <label for="fNotes">Notes</label>
+      <textarea id="fNotes" placeholder="Edition, where it came from, what you thought…"></textarea>
+    </div>
+  </div>
+  <footer>
+    <button class="btn primary" id="btnSave">Save</button>
+    <button class="btn ghost" id="btnCancel">Cancel</button>
+    <span style="flex:1"></span>
+    <button class="btn danger sm" id="btnDelete" hidden>Delete</button>
+  </footer>
+</aside>
+
+<!-- ══ settings ═══════════════════════════════════════════════════════ -->
+<aside class="drawer settings" id="settings" aria-label="Settings">
+  <header>
+    <h3>Storage</h3>
+    <button class="btn ghost sm" id="settingsClose" aria-label="Close">✕</button>
+  </header>
+  <div class="body">
+    <dl class="facts">
+      <dt>Repository</dt><dd id="setWhere" class="mono"></dd>
+      <dt>Branch</dt><dd id="setBranch" class="mono"></dd>
+      <dt>File</dt><dd id="setPath" class="mono"></dd>
+    </dl>
+    <p class="gate-fine">
+      Every edit is a commit. The file is AES-256-GCM ciphertext — GitHub, and anyone
+      who wanders past the repository, sees only noise.
+    </p>
+    <div style="display:flex; gap:8px; flex-wrap:wrap;">
+      <a class="btn sm" id="setHistory" target="_blank" rel="noopener">View history on GitHub</a>
+      <button class="btn sm" id="btnSyncNow">Check for changes</button>
+    </div>
+
+    <hr>
+    <label class="toggle"><input type="checkbox" id="setRemember"> Stay unlocked on this device</label>
+    <p class="gate-fine">Off means the password is asked for on every visit. On is convenient, and means
+      anyone holding this unlocked device can read the shelf.</p>
+
+    <hr>
+    <form id="pwForm">
+      <h4>Change password</h4>
+      <label class="field"><span>Current password</span>
+        <input type="password" id="pwCur" autocomplete="current-password"></label>
+      <label class="field"><span>New password</span>
+        <input type="password" id="pwNew" autocomplete="new-password" minlength="12">
+        <div class="pw-meter s0" id="pwMeter2"><div class="pw-bar"><i></i></div><span class="pw-label"></span></div>
+      </label>
+      <button class="btn" id="btnChangePw" type="submit">Change it</button>
+      <p class="gate-fine">Re-seals both files. Other devices will ask for the new password next time.</p>
+    </form>
+
+    <hr>
+    <form id="tokenForm">
+      <h4>Replace the GitHub token</h4>
+      <label class="field"><span>New token</span>
+        <input type="password" id="tokenNew" autocomplete="off" placeholder="github_pat_…"></label>
+      <label class="field"><span>Your password</span>
+        <input type="password" id="tokenPw" autocomplete="current-password"></label>
+      <button class="btn" id="btnReplaceToken" type="submit">Store it</button>
+      <p class="gate-fine">Fine-grained tokens expire. When one does, make a new one and put it here.</p>
+    </form>
+
+    <div class="gate-msg" id="setMsg" hidden></div>
+
+    <hr>
+    <button class="btn danger" id="btnSignOut">Sign out on this device</button>
+  </div>
+</aside>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script src="config.js"></script>
+<script src="store.js"></script>
+<script src="app.js"></script>
+<script src="gate.js"></script>
+</body>
+</html>
