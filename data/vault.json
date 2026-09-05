@@ -1,0 +1,14 @@
+{
+  "app": "bibliotheca",
+  "kind": "vault",
+  "v": 1,
+  "kdf": {
+    "name": "PBKDF2",
+    "hash": "SHA-256",
+    "iterations": 600000,
+    "salt": "PuIrDB2wY1VoNBbh9D0rsQ=="
+  },
+  "iv": "wh/ra/lyUwWXH57V",
+  "ct": "8zuRmqNKFPViNopA/2aweLbhD/MqKTBp1JAKiBsy/Sw0erE7OnDc1c+bONI+XANzhXydboe2iSJrMTnjSIChekDgpi4cwcaW9cg/oWnWawkARV1KEusg7WGmo234Fk12gg7gbm/GkOa3Gfcz+compzo+gJJegXg/rWyxmqF7ZWg7RrEP0JZY3A+Y/XxwcDcF9FcjBFaVbk4kz8VpcUc=",
+  "note": "Encrypted. Without the password this file is noise."
+}
