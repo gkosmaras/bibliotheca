@@ -1,7 +1,7 @@
 # Bibliotheca
 
-A personal library that lives in this repository and opens with a password from
-any device, anywhere.
+A personal library and a wishlist, living in this repository, opening with a
+password from any device, anywhere.
 
 **[SETUP.md](SETUP.md) has the step-by-step. Start there.**
 
@@ -64,23 +64,45 @@ you're told. Nothing is silently thrown away.
 Roughly 2,000 lines, no build step, no dependencies. Excel import and export
 pull SheetJS from a CDN the first time you use them and not before.
 
+## The wishlist
+
+A second list with exactly the same shape as the library. Add what you want the
+way you add anything else; when you buy it, the **→** button on the row (or
+**Bought it** in the editor) moves the entry across, keeping its id, its
+category, its notes — everything — and stamping the date you got it.
+
+Because it is the same shape, everything else works on it too: search, category
+filters, Excel and CSV export, and a check that warns when something on the
+wishlist is already on your shelf.
+
 ## Data shape
 
-Unchanged from the original app, so old backups import and new ones export the
-same:
+Version 2. Ratings are gone; `year`, `pages`, `series` and `seriesNo` are new,
+and blank means `null` rather than zero. A version 1 file is upgraded in place
+the first time the app opens it, as its own commit.
 
 ```json
 {
   "books": [
     { "id": "b0001", "title": "…", "author": "…", "category": "…",
-      "language": "…", "read": true, "rating": 0, "notes": "", "added": null }
+      "language": "…", "read": true, "year": 1949, "pages": 328,
+      "series": "", "seriesNo": null, "notes": "", "added": null }
   ],
+  "wishlist": [ /* the same shape, exactly */ ],
   "categories": [ { "name": "Politics", "color": "Red" } ],
-  "version": 1,
+  "version": 2,
   "updatedAt": "2026-09-05T12:00:00.000Z",
   "source": "Bibliotheca"
 }
 ```
+
+## Colours
+
+Thirty-two, in two rings of sixteen. The first ring is the original set,
+unchanged, so no category ever changes colour on you. The second sits half a
+hue-step across and lighter, so the two rings read as different colours rather
+than as near-misses. A category shows only the colour it is using; click that
+button to open the full set.
 
 ## Keeping a copy elsewhere
 
@@ -96,3 +118,5 @@ occasionally, and worth doing before you change anything drastic.
   yours does; every device picks it up on its next unlock.
 - The page asks GitHub about 150 times an hour at most while open, against a
   limit of 5,000.
+- Asset URLs carry a `?v=` marker. Bump it in `index.html` whenever you change
+  a `.js` or `.css` file, or browsers will keep serving the old one.

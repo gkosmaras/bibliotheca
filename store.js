@@ -226,15 +226,17 @@
   /* ── three-way merge, so two devices can both be wrong at once ───────── */
 
   const fingerprint = (b) => b ? [b.title, b.author, b.category, b.language,
-                                  b.read ? 1 : 0, b.rating, b.notes, b.added].join("␟") : null;
+                                  b.read ? 1 : 0, b.year, b.pages, b.series, b.seriesNo,
+                                  b.notes, b.added].join("␟") : null;
 
-  function merge3(base, local, remote) {
-    const B = new Map((base   && base.books   || []).map(b => [b.id, b]));
-    const L = new Map((local  && local.books  || []).map(b => [b.id, b]));
-    const R = new Map((remote && remote.books || []).map(b => [b.id, b]));
+  // Reconciles one list (books, or wishlist) three ways.
+  function mergeList(baseList, localList, remoteList) {
+    const B = new Map((baseList   || []).map(b => [b.id, b]));
+    const L = new Map((localList  || []).map(b => [b.id, b]));
+    const R = new Map((remoteList || []).map(b => [b.id, b]));
 
-    const books = [], seen = new Set();
-    const order = (local.books || []).map(b => b.id).concat((remote.books || []).map(b => b.id));
+    const out = [], seen = new Set();
+    const order = (localList || []).map(b => b.id).concat((remoteList || []).map(b => b.id));
     let incoming = 0;
 
     for (const id of order) {
@@ -244,23 +246,39 @@
 
       if (l && r) {
         // Untouched here since the last sync? Then the other device's copy is newer.
-        if (b && fingerprint(l) === fingerprint(b) && fingerprint(r) !== fingerprint(b)) { books.push(r); incoming++; }
-        else books.push(l);
+        if (b && fingerprint(l) === fingerprint(b) && fingerprint(r) !== fingerprint(b)) { out.push(r); incoming++; }
+        else out.push(l);
       } else if (l && !r) {
-        if (!b) books.push(l);            // added here
+        if (!b) out.push(l);              // added here
         // else: deleted on the other device — let the deletion stand
       } else if (r && !l) {
-        if (!b) { books.push(r); incoming++; }   // added there
+        if (!b) { out.push(r); incoming++; }     // added there
         // else: deleted here — let our deletion stand
       }
     }
+    return { list: out, incoming: incoming };
+  }
+
+  function merge3(base, local, remote) {
+    base = base || {};
+    const books = mergeList(base.books, local.books, remote.books);
+    const wish  = mergeList(base.wishlist, local.wishlist, remote.wishlist);
+
+    // A book bought on one device left the wishlist and joined the library there.
+    // Both halves of that move are already in the merge; this just makes sure a
+    // moved entry doesn't end up sitting in both lists at once.
+    const inLibrary = new Set(books.list.map(b => b.id));
+    const wishlist = wish.list.filter(w => !inLibrary.has(w.id));
 
     const same = (a, c) => JSON.stringify(a || []) === JSON.stringify(c || []);
-    const categories = same(local.categories, base && base.categories)
+    const categories = same(local.categories, base.categories)
       ? (remote.categories || local.categories)
       : local.categories;
 
-    return { merged: { books: books, categories: categories }, incoming: incoming };
+    return {
+      merged: { books: books.list, wishlist: wishlist, categories: categories },
+      incoming: books.incoming + wish.incoming,
+    };
   }
 
   /* ── the store ───────────────────────────────────────────────────────── */
@@ -345,6 +363,7 @@
 
       const payload = {
         books: (opts.seed && opts.seed.books) || [],
+        wishlist: (opts.seed && opts.seed.wishlist) || [],
         categories: (opts.seed && opts.seed.categories) || [],
       };
       await this.push(payload, "Bibliotheca: first commit");
@@ -413,6 +432,18 @@
       return payload;
     },
 
+    // The file in the repo predates a schema change: write the upgraded shape
+    // once, as its own commit, rather than waiting for the next edit.
+    async upgrade(payload, message) {
+      if (this.state !== "ready") return;
+      try {
+        await this.push(payload, message);
+        this.status("on", "updated · " + clock());
+      } catch (e) {
+        this.save(payload, true);        // fall back to the ordinary save path
+      }
+    },
+
     /* ── saving ────────────────────────────────────────────────────────── */
 
     // Called on every edit. Coalesces a burst of keystrokes into one commit.
@@ -463,8 +494,10 @@
 
     async push(payload, message) {
       const body = {
-        books: payload.books, categories: payload.categories,
-        version: 1, updatedAt: new Date().toISOString(), source: "Bibliotheca",
+        books: payload.books,
+        wishlist: payload.wishlist || [],
+        categories: payload.categories,
+        version: 2, updatedAt: new Date().toISOString(), source: "Bibliotheca",
       };
       const sealed = await seal(this.key, body);
       const doc = { app: "bibliotheca", kind: "library", v: 1, iv: sealed.iv, ct: sealed.ct,
@@ -586,6 +619,21 @@
   // A readable commit message, so the repo's history is worth scrolling.
   function describe(before, after) {
     if (!before) return "update library";
+
+    const wasWanted = new Map((before.wishlist || []).map(x => [x.id, x]));
+    const nowWanted = new Map((after.wishlist || []).map(x => [x.id, x]));
+    const nowOwned  = new Map((after.books || []).map(x => [x.id, x]));
+    const bought = [...wasWanted.keys()].filter(id => !nowWanted.has(id) && nowOwned.has(id));
+    if (bought.length === 1) return "bought “" + (nowOwned.get(bought[0]).title || "a book") + "”";
+    if (bought.length > 1) return "bought " + bought.length + " books";
+    const wantAdded = [...nowWanted.keys()].filter(id => !wasWanted.has(id));
+    const wantGone  = [...wasWanted.keys()].filter(id => !nowWanted.has(id) && !nowOwned.has(id));
+    if (wantAdded.length === 1 && !wantGone.length)
+      return "want “" + (nowWanted.get(wantAdded[0]).title || "a book") + "”";
+    if (wantAdded.length > 1) return "+" + wantAdded.length + " on the wishlist";
+    if (wantGone.length === 1) return "drop “" + (wasWanted.get(wantGone[0]).title || "a book") + "” from the wishlist";
+    if (wantGone.length > 1) return "−" + wantGone.length + " from the wishlist";
+
     const b = new Map((before.books || []).map(x => [x.id, x]));
     const a = new Map((after.books || []).map(x => [x.id, x]));
     const added = [...a.keys()].filter(id => !b.has(id));

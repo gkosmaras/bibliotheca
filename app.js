@@ -1,33 +1,48 @@
 /* ============================================================================
    Bibliotheca — the shelf itself
    Everything below is presentation and editing. Where the books live is
-   store.js's business; this file only ever hands it { books, categories }.
+   store.js's business; this file only ever hands it { books, wishlist,
+   categories }.
    ========================================================================== */
 
 (function () {
   "use strict";
 
-  /* ── palette: the 16 category hues, fixed order ───────────────────── */
+  /* ── palette ──────────────────────────────────────────────────────────
+     Two rings of sixteen. The first is the original set, unchanged, so a
+     category keeps the colour it was given. The second sits half a hue-step
+     across and lighter, so the two rings read as different colours rather
+     than as near-misses of each other.                                     */
   const PALETTE = [
-    { name: "Red",      hex: "#CC3333" }, { name: "Green",   hex: "#46CC33" },
-    { name: "Blue",     hex: "#3359CC" }, { name: "Rose",    hex: "#CC336C" },
-    { name: "Lime",     hex: "#80CC33" }, { name: "Sky Blue",hex: "#3393CC" },
-    { name: "Magenta",  hex: "#CC33A6" }, { name: "Olive",   hex: "#94A329" },
-    { name: "Teal",     hex: "#19B2B3" }, { name: "Purple",  hex: "#B933CC" },
-    { name: "Gold",     hex: "#CCA633" }, { name: "Mint",    hex: "#33CC93" },
-    { name: "Violet",   hex: "#7F33CC" }, { name: "Orange",  hex: "#CC6C33" },
-    { name: "Emerald",  hex: "#33CC59" }, { name: "Indigo",  hex: "#4633CC" },
+    { name: "Red",        hex: "#CC3333" }, { name: "Green",      hex: "#46CC33" },
+    { name: "Blue",       hex: "#3359CC" }, { name: "Rose",       hex: "#CC336C" },
+    { name: "Lime",       hex: "#80CC33" }, { name: "Sky Blue",   hex: "#3393CC" },
+    { name: "Magenta",    hex: "#CC33A6" }, { name: "Olive",      hex: "#94A329" },
+    { name: "Teal",       hex: "#19B2B3" }, { name: "Purple",     hex: "#B933CC" },
+    { name: "Gold",       hex: "#CCA633" }, { name: "Mint",       hex: "#33CC93" },
+    { name: "Violet",     hex: "#7F33CC" }, { name: "Orange",     hex: "#CC6C33" },
+    { name: "Emerald",    hex: "#33CC59" }, { name: "Indigo",     hex: "#4633CC" },
+    { name: "Coral",      hex: "#DA7F6A" }, { name: "Apricot",    hex: "#DAA96A" },
+    { name: "Wheat",      hex: "#DAD36A" }, { name: "Pear",       hex: "#B7DA6A" },
+    { name: "Fern",       hex: "#8DDA6A" }, { name: "Jade",       hex: "#6ADA71" },
+    { name: "Seafoam",    hex: "#6ADA9B" }, { name: "Aqua",       hex: "#6ADAC5" },
+    { name: "Cerulean",   hex: "#6AC5DA" }, { name: "Cornflower", hex: "#6A9BDA" },
+    { name: "Periwinkle", hex: "#6A71DA" }, { name: "Lavender",   hex: "#8D6ADA" },
+    { name: "Orchid",     hex: "#B76ADA" }, { name: "Fuchsia",    hex: "#DA6AD3" },
+    { name: "Blush",      hex: "#DA6AA9" }, { name: "Peony",      hex: "#DA6A7F" },
   ];
   const hexOf = (colorName) => (PALETTE.find(p => p.name === colorName) || {}).hex || "";
 
   /* ── state ────────────────────────────────────────────────────────── */
+  const LISTS = { library: "books", wishlist: "wishlist" };
+
   const state = {
-    books: [], categories: [], loaded: false,
+    books: [], wishlist: [], categories: [], loaded: false,
     view: "library",
     q: "", cats: new Set(), lang: "", readFilter: "",
     sort: { key: "title", dir: 1 },
-    editing: null, draft: null,
-    openChecks: new Set(), showAllAuthors: false,
+    editing: null, editingIn: "books", draft: null,
+    openChecks: new Set(), openCat: null, showAllAuthors: false,
   };
 
   const $  = (sel) => document.querySelector(sel);
@@ -45,18 +60,32 @@
 
   const uid = () => "b" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 
+  // Which array the current view is looking at.
+  const listKey = () => LISTS[state.view] || "books";
+  const rows    = () => state[listKey()];
+  const isList  = () => state.view === "library" || state.view === "wishlist";
+
   /* ── talking to the store ─────────────────────────────────────────── */
 
-  const payload = () => ({ books: state.books, categories: state.categories });
+  const payload = () => ({
+    books: state.books, wishlist: state.wishlist, categories: state.categories,
+  });
 
   function adopt(doc) {
     state.books = Array.isArray(doc && doc.books) ? doc.books.map(normalizeBook) : [];
+    state.wishlist = Array.isArray(doc && doc.wishlist) ? doc.wishlist.map(normalizeBook) : [];
     state.categories = Array.isArray(doc && doc.categories) && doc.categories.length
       ? doc.categories.map(c => ({ name: String(c.name || ""), color: c.color || "" })).filter(c => c.name)
       : [];
     state.loaded = true;
     renderAll();
   }
+
+  const num = (v, max) => {
+    if (v == null || v === "") return null;
+    const n = Math.round(Number(v));
+    return isFinite(n) && n > 0 ? Math.min(n, max) : null;
+  };
 
   function normalizeBook(b) {
     return {
@@ -66,7 +95,10 @@
       category: String(b.category || "").trim(),
       language: String(b.language || "").trim(),
       read: !!b.read,
-      rating: Math.max(0, Math.min(5, Number(b.rating) || 0)),
+      year: num(b.year, 2999),
+      pages: num(b.pages, 99999),
+      series: String(b.series || "").trim(),
+      seriesNo: num(b.seriesNo, 999),
       notes: String(b.notes || ""),
       added: b.added || null,
     };
@@ -83,42 +115,49 @@
     const c = state.categories.find(x => x.name === name);
     return c ? hexOf(c.color) : "";
   };
-  const countsByCategory = () => {
+  const countsByCategory = (src) => {
     const m = new Map();
-    state.books.forEach(b => m.set(b.category, (m.get(b.category) || 0) + 1));
+    (src || state.books).forEach(b => m.set(b.category, (m.get(b.category) || 0) + 1));
     return m;
   };
-  const languages = () => {
+  const languages = (src) => {
     const m = new Map();
-    state.books.forEach(b => { if (b.language) m.set(b.language, (m.get(b.language) || 0) + 1); });
+    (src || state.books).forEach(b => { if (b.language) m.set(b.language, (m.get(b.language) || 0) + 1); });
     return [...m.entries()].sort((a, b) => b[1] - a[1]);
   };
-  const authors = () => {
+  const authors = (src) => {
     const m = new Map();
-    state.books.forEach(b => { if (b.author) m.set(b.author, (m.get(b.author) || 0) + 1); });
+    (src || state.books).forEach(b => { if (b.author) m.set(b.author, (m.get(b.author) || 0) + 1); });
     return [...m.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
   };
 
   function visibleBooks() {
     const q = fold(state.q);
     const terms = q ? q.split(" ") : [];
-    let list = state.books.filter(b => {
+    const list = rows().filter(b => {
       if (state.cats.size && !state.cats.has(b.category)) return false;
       if (state.lang && b.language !== state.lang) return false;
       if (state.readFilter === "yes" && !b.read) return false;
       if (state.readFilter === "no" && b.read) return false;
-      if (state.readFilter === "rated" && !b.rating) return false;
-      if (state.readFilter === "unrated" && b.rating) return false;
       if (terms.length) {
-        const hay = fold(b.title + " " + b.author + " " + b.notes + " " + b.category);
+        const hay = fold(b.title + " " + b.author + " " + b.notes + " " + b.category + " " + b.series);
         if (!terms.every(t => hay.includes(t))) return false;
       }
       return true;
     });
+
     const { key, dir } = state.sort;
-    const val = (b) => key === "rating" ? b.rating : key === "read" ? (b.read ? 1 : 0) : fold(b[key] || "￿");
+    // Numbers sort as numbers, and a blank always sinks to the bottom whichever
+    // way the arrow points.
+    const numeric = key === "year" || key === "pages";
+    const val = (b) => numeric ? b[key] : key === "read" ? (b.read ? 1 : 0) : fold(b[key] || "￿");
     list.sort((a, b) => {
       const x = val(a), y = val(b);
+      if (numeric) {
+        if (x == null && y == null) return fold(a.title).localeCompare(fold(b.title));
+        if (x == null) return 1;
+        if (y == null) return -1;
+      }
       if (x < y) return -dir;
       if (x > y) return dir;
       return fold(a.title).localeCompare(fold(b.title));
@@ -139,6 +178,7 @@
   function renderNav() {
     const read = state.books.filter(b => b.read).length;
     $("#navLibrary").textContent = state.books.length || "—";
+    $("#navWishlist").textContent = state.wishlist.length || "—";
     $("#navCats").textContent = state.categories.length || "—";
     $("#navInsights").textContent = state.books.length ? Math.round(read / state.books.length * 100) + "%" : "—";
     const issues = runChecks().filter(c => c.severity !== "ok" && c.severity !== "info")
@@ -152,66 +192,64 @@
   }
 
   function renderFilters() {
-    const counts = countsByCategory();
-    const wrap = $("#catFilters");
-    wrap.innerHTML = state.categories.map(c => {
+    const counts = countsByCategory(isList() ? rows() : state.books);
+    $("#catFilters").innerHTML = state.categories.map(c => {
       const n = counts.get(c.name) || 0;
       const on = state.cats.has(c.name);
-      return '<button class="chip" data-cat="' + esc(c.name) + '" aria-pressed="' + on + '" style="--c:' + hexOf(c.color) + '">' +
+      return '<button class="chip' + (n ? "" : " zero") + '" data-cat="' + esc(c.name) + '" aria-pressed="' + on + '" style="--c:' + hexOf(c.color) + '">' +
              '<span class="swatch"></span>' + esc(c.name) + ' <span class="n">' + n + '</span></button>';
     }).join("") + (state.cats.size ? '<button class="btn ghost sm" id="clearCats">clear</button>' : "");
 
     const langSel = $("#fLang");
     const current = state.lang;
     langSel.innerHTML = '<option value="">All languages</option>' +
-      languages().map(([l, n]) => '<option value="' + esc(l) + '">' + esc(l) + " · " + n + "</option>").join("");
+      languages(isList() ? rows() : state.books)
+        .map(([l, n]) => '<option value="' + esc(l) + '">' + esc(l) + " · " + n + "</option>").join("");
     langSel.value = current;
   }
 
-  function starsInner(rating, editable) {
-    let out = "";
-    for (let i = 1; i <= 5; i++) {
-      const on = i <= rating ? "on" : "";
-      out += editable
-        ? '<button class="' + on + '" data-star="' + i + '" aria-label="' + i + ' star' + (i > 1 ? "s" : "") + '">★</button>'
-        : '<span class="' + on + '">★</span>';
-    }
-    return out;
-  }
-  function starsHtml(rating, editable, id) {
-    return '<span class="stars' + (editable ? "" : " read-only") + (rating ? "" : " zero") + '"' +
-      (id ? ' data-stars="' + id + '"' : "") + ">" + starsInner(rating, editable) + "</span>";
-  }
-
   function renderRows() {
+    if (!isList()) return;
     const list = visibleBooks();
+    const all = rows();
     const box = $("#rows");
+    const noun = state.view === "wishlist" ? "wanted" : "books";
     $("#viewMeta").textContent = !state.loaded ? "loading…"
-      : list.length === state.books.length
-        ? state.books.length + " books"
-        : list.length + " of " + state.books.length + " books";
+      : list.length === all.length ? all.length + " " + noun
+      : list.length + " of " + all.length + " " + noun;
 
     if (!state.loaded) { box.innerHTML = '<div class="empty"><p>Opening your library…</p></div>'; return; }
     if (!list.length) {
       box.innerHTML = '<div class="empty"><p>' +
-        (state.books.length ? "Nothing matches these filters." : "Your library is empty.") +
+        (all.length ? "Nothing matches these filters."
+          : state.view === "wishlist" ? "Nothing on the wishlist yet."
+          : "Your library is empty.") +
         '</p><button class="btn" id="emptyAction">' +
-        (state.books.length ? "Clear filters" : "Add the first book") + "</button></div>";
+        (all.length ? "Clear filters" : state.view === "wishlist" ? "Add something you want" : "Add the first book") +
+        "</button></div>";
       return;
     }
 
+    const wish = state.view === "wishlist";
     box.innerHTML = list.map(b => {
       const c = catColor(b.category);
+      const ser = b.series
+        ? '<span class="ser">' + esc(b.series) + (b.seriesNo ? " " + b.seriesNo : "") + "</span>"
+        : "";
       return '<div class="row" data-id="' + b.id + '" style="--c:' + (c || "transparent") + '" tabindex="0">' +
-        '<div class="title truncate">' + (esc(b.title) || '<span class="unset">Untitled</span>') + "</div>" +
+        '<div class="title truncate">' + (esc(b.title) || '<span class="unset">Untitled</span>') + ser + "</div>" +
         '<div class="author truncate">' + (esc(b.author) || '<span class="unset">unknown</span>') + "</div>" +
         '<div class="cat">' + (b.category
             ? '<span class="swatch"></span><span class="truncate">' + esc(b.category) + "</span>"
             : '<span class="unset">uncategorised</span>') + "</div>" +
         '<div class="lang truncate">' + esc(b.language) + "</div>" +
-        '<div class="rate">' + starsHtml(b.rating, true, b.id) + "</div>" +
-        '<button class="readmark" data-read="' + b.id + '" aria-pressed="' + b.read + '" ' +
-          'aria-label="' + (b.read ? "Mark as unread" : "Mark as read") + '">✓</button>' +
+        '<div class="year mono">' + (b.year || '<span class="unset">—</span>') + "</div>" +
+        '<div class="pages mono">' + (b.pages || '<span class="unset">—</span>') + "</div>" +
+        (wish
+          ? '<button class="movemark" data-move="' + b.id + '" title="I bought it — move to the library" ' +
+            'aria-label="Move to the library">→</button>'
+          : '<button class="readmark" data-read="' + b.id + '" aria-pressed="' + b.read + '" ' +
+            'aria-label="' + (b.read ? "Mark as unread" : "Mark as read") + '">✓</button>') +
       "</div>";
     }).join("");
   }
@@ -220,16 +258,23 @@
   function renderInsights() {
     const books = state.books;
     const read = books.filter(b => b.read).length;
-    const rated = books.filter(b => b.rating > 0);
-    const avg = rated.length ? rated.reduce((s, b) => s + b.rating, 0) / rated.length : 0;
+    const withPages = books.filter(b => b.pages);
+    const totalPages = withPages.reduce((s, b) => s + b.pages, 0);
+    const years = books.map(b => b.year).filter(Boolean).sort((a, b) => a - b);
+
     const tiles = [
       ["Volumes", books.length, ""],
       ["Read", read, books.length ? Math.round(read / books.length * 100) + "%" : ""],
       ["Unread", books.length - read, ""],
-      ["Rated", rated.length, rated.length ? avg.toFixed(2) + " avg" : ""],
+      ["Wishlist", state.wishlist.length, ""],
       ["Authors", authors().length, ""],
       ["Languages", languages().length, ""],
     ];
+    if (totalPages) tiles.push(["Pages", totalPages.toLocaleString(),
+      withPages.length < books.length ? "from " + withPages.length + " of " + books.length : ""]);
+    if (years.length) tiles.push(["Median year", years[Math.floor(years.length / 2)],
+      years[0] + "–" + years[years.length - 1]]);
+
     $("#tiles").innerHTML = tiles.map(([label, v, sub]) =>
       '<div class="tile"><div class="eyebrow">' + label + "</div>" +
       '<div class="v">' + v + (sub ? " <small>" + sub + "</small>" : "") + "</div></div>").join("");
@@ -239,28 +284,24 @@
       .map(c => ({ label: c.name, v: counts.get(c.name) || 0, hex: hexOf(c.color) }))
       .filter(r => r.v > 0).sort((a, b) => b.v - a.v);
 
-    const ratingByCat = state.categories.map(c => {
-      const rs = books.filter(b => b.category === c.name && b.rating > 0);
-      return { label: c.name, v: rs.length ? rs.reduce((s, b) => s + b.rating, 0) / rs.length : 0,
-               n: rs.length, hex: hexOf(c.color) };
-    }).filter(r => r.n > 0).sort((a, b) => b.v - a.v);
+    // read vs unread, so it's clear where the backlog actually sits
+    const backlog = state.categories.map(c => {
+      const inCat = books.filter(b => b.category === c.name);
+      return { label: c.name, hex: hexOf(c.color),
+               done: inCat.filter(b => b.read).length, left: inCat.filter(b => !b.read).length };
+    }).filter(r => r.done + r.left > 0).sort((a, b) => b.left - a.left || (b.done + b.left) - (a.done + a.left));
 
     const repeats = authors().filter(([, n]) => n > 1).map(([a, n]) => ({ label: a, v: n }));
     const AUTHOR_CAP = 15;
     const topAuthors = state.showAllAuthors ? repeats : repeats.slice(0, AUTHOR_CAP);
     const hidden = repeats.length - topAuthors.length;
-
     const langRows = languages().map(([l, n]) => ({ label: l, v: n }));
 
-    const dist = [5, 4, 3, 2, 1].map(r => ({
-      label: "★".repeat(r), v: books.filter(b => b.rating === r).length,
-    }));
-
-    const bars = (rows, opts) => {
+    const bars = (list, opts) => {
       opts = opts || {};
-      if (!rows.length) return '<p class="note" style="margin:0">' + (opts.empty || "Nothing to show yet.") + "</p>";
-      const max = opts.max || Math.max(...rows.map(r => r.v)) || 1;
-      return '<div class="bars">' + rows.map(r =>
+      if (!list.length) return '<p class="note" style="margin:0">' + (opts.empty || "Nothing to show yet.") + "</p>";
+      const max = opts.max || Math.max(...list.map(r => r.v)) || 1;
+      return '<div class="bars">' + list.map(r =>
         '<div class="bar-row" style="--c:' + (r.hex || "var(--ink-2)") + '">' +
           '<div class="bar-label">' + (r.hex ? '<span class="swatch"></span>' : "") +
             "<span>" + esc(r.label) + "</span></div>" +
@@ -270,20 +311,32 @@
         "</div>").join("") + "</div>";
     };
 
+    const split = (list) => {
+      if (!list.length) return '<p class="note" style="margin:0">Nothing to show yet.</p>';
+      const max = Math.max(...list.map(r => r.done + r.left)) || 1;
+      return '<div class="bars">' + list.map(r =>
+        '<div class="bar-row" style="--c:' + r.hex + '">' +
+          '<div class="bar-label"><span class="swatch"></span><span>' + esc(r.label) + "</span></div>" +
+          '<div class="bar-track split">' +
+            '<div class="bar-fill" style="width:' + (r.done / max * 100).toFixed(1) + '%"></div>' +
+            '<div class="bar-fill ghost" style="width:' + (r.left / max * 100).toFixed(1) + '%"></div>' +
+          "</div>" +
+          '<div class="bar-val">' + (r.left ? r.left : "—") + "</div>" +
+        "</div>").join("") + "</div>" +
+        '<p class="legend"><span class="key"></span>read<span class="key ghost"></span>unread ' +
+        '<span class="legend-note">the number is what is left</span></p>';
+    };
+
     $("#panels").innerHTML =
       panel("Books by category", "Every volume, counted by its shelf.", bars(catRows)) +
-      panel("Average rating by category", "Unrated books are left out of the average.",
-        bars(ratingByCat, { max: 5, fmt: r => r.v.toFixed(1),
-          empty: "No ratings yet — rate a few books and this fills in." })) +
+      panel("Where the backlog is", "Read against unread, worst first.", split(backlog)) +
       panel("Authors with more than one book", "The spines that repeat on the shelf.",
         bars(topAuthors, { empty: "No author appears twice yet." }) +
         (hidden > 0 || state.showAllAuthors
           ? '<p class="more"><button class="btn sm" id="btnMoreAuthors">' +
             (state.showAllAuthors ? "Show the top 15" : "Show " + hidden + " more") + "</button></p>"
           : ""), true) +
-      panel("Languages", "How the collection splits by language of the edition.", bars(langRows)) +
-      panel("Rating distribution", "How you spend your stars.",
-        bars(dist, { empty: "No ratings yet." }));
+      panel("Languages", "How the collection splits by language of the edition.", bars(langRows));
   }
 
   const panel = (title, note, inner, wide) =>
@@ -310,7 +363,7 @@
     const catNames = new Set(state.categories.map(c => c.name));
     const checks = [];
 
-    // 1. duplicates — same title and author
+    // 1. duplicates — same title, author and language
     const seen = new Map(), dups = [];
     books.forEach(b => {
       const key = fold(b.title) + "|" + fold(b.author) + "|" + fold(b.language);
@@ -322,20 +375,53 @@
       name: "Duplicate entries", desc: "Same title, author and language listed twice",
       items: dups.map(d => ({ book: d.book, sub: "also entered as a separate row", acts: ["open", "delete"] })) });
 
-    // 2. uncategorised
+    // 2. already on the shelf — the point of a wishlist is not to buy it twice
+    const owned = new Set(books.map(b => fold(b.title) + "|" + fold(b.author)));
+    const already = state.wishlist.filter(w => fold(w.title) && owned.has(fold(w.title) + "|" + fold(w.author)));
+    checks.push({ id: "have", severity: already.length ? "crit" : "ok",
+      name: "On the wishlist but already owned", desc: "You have this one — don't buy it again",
+      items: already.map(w => ({ book: w, list: "wishlist",
+        sub: "already in the library", acts: ["openwish", "delwish"] })) });
+
+    // 3. uncategorised
     const uncat = books.filter(b => !b.category);
     checks.push({ id: "uncat", severity: uncat.length ? "warn" : "ok",
       name: "Uncategorised books", desc: "No category assigned",
       items: uncat.map(b => ({ book: b, sub: "no category", acts: ["open"] })) });
 
-    // 3. category not in the category list
+    // 4. category not in the category list
     const orphan = books.filter(b => b.category && !catNames.has(b.category));
     checks.push({ id: "orphan", severity: orphan.length ? "warn" : "ok",
       name: "Unknown categories", desc: "Category is not on the Categories list, so it has no colour",
       items: orphan.map(b => ({ book: b, sub: '"' + b.category + '" is not a defined category',
         acts: ["open", "addcat"] })) });
 
-    // 4. missing author or language
+    // 5. gaps in a series
+    const bySeries = new Map();
+    books.forEach(b => {
+      if (!b.series || !b.seriesNo) return;
+      const k = fold(b.series);
+      if (!bySeries.has(k)) bySeries.set(k, { name: b.series, have: new Set(), sample: b });
+      bySeries.get(k).have.add(b.seriesNo);
+    });
+    const wanted = new Set(state.wishlist.map(w => fold(w.series) + "#" + w.seriesNo));
+    const gaps = [];
+    bySeries.forEach((s, k) => {
+      const nums = [...s.have].sort((a, b) => a - b);
+      if (nums.length < 2) return;
+      for (let n = nums[0]; n < nums[nums.length - 1]; n++) {
+        if (!s.have.has(n) && !wanted.has(k + "#" + n)) {
+          gaps.push({ plain: s.name + " — no " + n, series: s.name, no: n, author: s.sample.author,
+            category: s.sample.category, language: s.sample.language,
+            sub: "you have " + nums.join(", "), acts: ["wantit"] });
+        }
+      }
+    });
+    checks.push({ id: "series", severity: gaps.length ? "warn" : "ok",
+      name: "Gaps in a series", desc: "A numbered volume missing between ones you own",
+      items: gaps });
+
+    // 6. missing author or language
     const incomplete = books.filter(b => !b.author || !b.language);
     checks.push({ id: "missing", severity: incomplete.length ? "warn" : "ok",
       name: "Missing details", desc: "Author or language left blank",
@@ -343,7 +429,7 @@
         sub: [!b.author ? "no author" : null, !b.language ? "no language" : null].filter(Boolean).join(" · "),
         acts: ["open"] })) });
 
-    // 5. author spelling variants
+    // 7. author spelling variants
     const names = authors().map(([a]) => a);
     const variants = [];
     for (let i = 0; i < names.length; i++) {
@@ -357,19 +443,15 @@
       name: "Author name variants", desc: "Near-identical spellings that are probably one person",
       items: variants.map(([a, b]) => ({ pair: [a, b], acts: ["merge"] })) });
 
-    // 6. read but unrated
-    const unrated = books.filter(b => b.read && !b.rating);
-    checks.push({ id: "unrated", severity: "info",
-      name: "Read but unrated", desc: "Finished books with no stars yet",
-      items: unrated.map(b => ({ book: b, sub: "read · no rating", acts: ["open"] })) });
+    // 8. year or pages not filled in yet
+    const thin = books.filter(b => !b.year || !b.pages);
+    checks.push({ id: "thin", severity: "info",
+      name: "No year or page count", desc: "Fill these in and the Insights page gets more to say",
+      items: thin.map(b => ({ book: b,
+        sub: [!b.year ? "no year" : null, !b.pages ? "no page count" : null].filter(Boolean).join(" · "),
+        acts: ["open"] })) });
 
-    // 7. rated but not marked read
-    const ghost = books.filter(b => !b.read && b.rating > 0);
-    checks.push({ id: "ghost", severity: ghost.length ? "warn" : "ok",
-      name: "Rated but not marked read", desc: "A rating without a read mark",
-      items: ghost.map(b => ({ book: b, sub: b.rating + " stars · not marked read", acts: ["markread", "open"] })) });
-
-    // 8. same author in two languages (informational — usually deliberate)
+    // 9. same author in two languages (informational — usually deliberate)
     const langPairs = new Map();
     books.forEach(b => {
       const k = fold(b.author);
@@ -415,9 +497,14 @@
     const acts = (it.acts || []).map(a => {
       const id = it.book ? it.book.id : "";
       if (a === "open")     return '<button class="btn sm" data-fix="open" data-id="' + id + '">Open</button>';
+      if (a === "openwish") return '<button class="btn sm" data-fix="openwish" data-id="' + id + '">Open</button>';
       if (a === "delete")   return '<button class="btn sm danger" data-fix="delete" data-id="' + id + '">Delete</button>';
-      if (a === "markread") return '<button class="btn sm" data-fix="markread" data-id="' + id + '">Mark read</button>';
+      if (a === "delwish")  return '<button class="btn sm danger" data-fix="delwish" data-id="' + id + '">Remove from wishlist</button>';
       if (a === "addcat")   return '<button class="btn sm" data-fix="addcat" data-id="' + id + '">Add category</button>';
+      if (a === "wantit")   return '<button class="btn sm" data-fix="wantit" data-series="' + esc(it.series) +
+                                   '" data-no="' + it.no + '" data-author="' + esc(it.author || "") +
+                                   '" data-cat="' + esc(it.category || "") + '" data-lang="' + esc(it.language || "") +
+                                   '">Add to wishlist</button>';
       if (a === "merge")    return '<button class="btn sm" data-fix="mergeA" data-a="' + esc(it.pair[0]) + '" data-b="' + esc(it.pair[1]) + '">Use “' + esc(it.pair[0]) + '”</button>' +
                                    '<button class="btn sm" data-fix="mergeB" data-a="' + esc(it.pair[0]) + '" data-b="' + esc(it.pair[1]) + '">Use “' + esc(it.pair[1]) + '”</button>';
       return "";
@@ -432,35 +519,54 @@
   /* ── categories ───────────────────────────────────────────────────── */
   function renderCategories() {
     const counts = countsByCategory();
+    const wishCounts = countsByCategory(state.wishlist);
     const used = new Set(state.categories.map(c => c.color));
     $("#viewMeta").textContent = state.categories.length + " categories · " +
       (PALETTE.length - used.size) + " colours free";
-    $("#catsMeta").textContent = "Renaming a category renames it on every book that uses it.";
+    $("#catsMeta").textContent = "Renaming a category renames it on every book and wishlist entry that uses it.";
 
+    // 32 swatches on every row at once is a wall of colour; each row opens its
+    // own picker instead, and closes when you have chosen.
     $("#cats").innerHTML = state.categories.map((c, i) => {
       const n = counts.get(c.name) || 0;
-      return '<div class="cat-row" style="--c:' + hexOf(c.color) + '" data-i="' + i + '">' +
+      const w = wishCounts.get(c.name) || 0;
+      const open = state.openCat === i;
+      return '<div class="cat-row' + (open ? " open" : "") + '" style="--c:' + hexOf(c.color) + '" data-i="' + i + '">' +
         '<span class="bead"></span>' +
         '<input type="text" value="' + esc(c.name) + '" data-rename="' + i + '" aria-label="Category name">' +
-        '<div class="swatches">' + PALETTE.map(p =>
+        '<button class="colourpick" data-pick="' + i + '" aria-expanded="' + open + '">' +
+          '<span class="bead sm"></span>' + esc(c.color || "no colour") + "</button>" +
+        '<div class="n">' + n + (w ? '<span class="w" title="' + w + ' on the wishlist">+' + w + "</span>" : "") + "</div>" +
+        '<button class="btn ghost sm" data-delcat="' + i + '">Remove</button>' +
+        '<div class="swatches"' + (open ? "" : " hidden") + ">" + PALETTE.map(p =>
           '<button data-color="' + esc(p.name) + '" data-i="' + i + '" style="--c:' + p.hex + '" ' +
           'aria-pressed="' + (p.name === c.color) + '" title="' + esc(p.name) +
           (used.has(p.name) && p.name !== c.color ? " (in use)" : "") + '"></button>').join("") + "</div>" +
-        '<div class="n">' + n + "</div>" +
-        '<button class="btn ghost sm" data-delcat="' + i + '">Remove</button>' +
       "</div>";
     }).join("");
   }
 
   /* ── drawer ───────────────────────────────────────────────────────── */
-  function openDrawer(book) {
+  function openDrawer(book, which) {
+    const where = which || (state.view === "wishlist" ? "wishlist" : "books");
+    state.editingIn = where;
     state.editing = book ? book.id : null;
     state.draft = book ? Object.assign({}, book) : normalizeBook({ added: new Date().toISOString() });
-    $("#drawerTitle").textContent = book ? "Edit book" : "Add book";
+
+    const wish = where === "wishlist";
+    $("#drawerTitle").textContent = book
+      ? (wish ? "Edit wanted book" : "Edit book")
+      : (wish ? "Add to wishlist" : "Add book");
     $("#btnDelete").hidden = !book;
+    $("#btnDelete").textContent = wish ? "Remove" : "Delete";
+    $("#btnBought").hidden = !(book && wish);
     $("#fTitle").value = state.draft.title;
     $("#fAuthor").value = state.draft.author;
     $("#fLangIn").value = state.draft.language;
+    $("#fYear").value = state.draft.year || "";
+    $("#fPages").value = state.draft.pages || "";
+    $("#fSeries").value = state.draft.series;
+    $("#fSeriesNo").value = state.draft.seriesNo || "";
     $("#fNotes").value = state.draft.notes;
     $("#fRead2").checked = state.draft.read;
 
@@ -472,9 +578,11 @@
     $("#catHint").hidden = !extra.length;
     if (extra.length) $("#catHint").textContent = "“" + extra[0] + "” isn't on the Categories list yet.";
 
-    $("#authorList").innerHTML = authors().map(([a]) => '<option value="' + esc(a) + '">').join("");
-    $("#langList").innerHTML = languages().map(([l]) => '<option value="' + esc(l) + '">').join("");
-    drawStars();
+    const everything = state.books.concat(state.wishlist);
+    $("#authorList").innerHTML = authors(everything).map(([a]) => '<option value="' + esc(a) + '">').join("");
+    $("#langList").innerHTML = languages(everything).map(([l]) => '<option value="' + esc(l) + '">').join("");
+    $("#seriesList").innerHTML = [...new Set(everything.map(b => b.series).filter(Boolean))]
+      .sort().map(s => '<option value="' + esc(s) + '">').join("");
 
     $("#drawer").classList.add("open");
     $("#drawer").setAttribute("aria-hidden", "false");
@@ -487,10 +595,6 @@
 
   const isPhone = () => window.matchMedia("(max-width: 760px)").matches;
 
-  function drawStars() {
-    $("#fStars").innerHTML = starsInner(state.draft.rating, true);
-  }
-
   function closeDrawer() {
     $("#drawer").classList.remove("open");
     $("#drawer").setAttribute("aria-hidden", "true");
@@ -499,36 +603,75 @@
     state.editing = null; state.draft = null;
   }
 
-  function saveDrawer() {
+  function readDraft() {
     const d = state.draft;
-    if (!d) return;
     d.title = $("#fTitle").value.trim();
     d.author = $("#fAuthor").value.trim();
     d.category = $("#fCat").value;
     d.language = $("#fLangIn").value.trim();
+    d.year = num($("#fYear").value, 2999);
+    d.pages = num($("#fPages").value, 99999);
+    d.series = $("#fSeries").value.trim();
+    d.seriesNo = num($("#fSeriesNo").value, 999);
     d.notes = $("#fNotes").value;
     d.read = $("#fRead2").checked;
+    return d;
+  }
+
+  function saveDrawer() {
+    if (!state.draft) return;
+    const d = readDraft();
     if (!d.title) { toast("A book needs a title."); $("#fTitle").focus(); return; }
+    const where = state.editingIn;
+    const list = state[where];
+    const wish = where === "wishlist";
 
     if (state.editing) {
-      const i = state.books.findIndex(b => b.id === state.editing);
-      if (i > -1) state.books[i] = normalizeBook(d);
+      const i = list.findIndex(b => b.id === state.editing);
+      if (i > -1) list[i] = normalizeBook(d);
       commit("Saved", true);
     } else {
-      state.books.unshift(normalizeBook(d));
-      commit("Added “" + d.title + "”", true);
+      list.unshift(normalizeBook(d));
+      commit((wish ? "Added “" : "Added “") + d.title + "”" + (wish ? " to the wishlist" : ""), true);
     }
     closeDrawer();
   }
 
-  /* ── import / export ──────────────────────────────────────────────── */
-  const STAR = (n) => "★".repeat(n) + "☆".repeat(5 - n);
+  // Bought it: the entry moves across, keeping its id and everything on it.
+  function moveToLibrary(id, fromDrawer) {
+    const i = state.wishlist.findIndex(b => b.id === id);
+    if (i < 0) return;
+    const book = state.wishlist[i];
+    if (fromDrawer && state.draft && state.editing === id) Object.assign(book, normalizeBook(readDraft()));
+    book.added = new Date().toISOString();
+    state.wishlist.splice(i, 1);
+    state.books.unshift(book);
+    if (fromDrawer) closeDrawer();
+    commit("“" + book.title + "” moved to the library", true);
+  }
 
-  function libraryRows() {
-    return state.books.map(b => ({
+  function wantMissing(d) {
+    const entry = normalizeBook({
+      title: d.series + " " + d.no, author: d.author, category: d.cat,
+      language: d.lang, series: d.series, seriesNo: Number(d.no),
+      added: new Date().toISOString(),
+    });
+    state.wishlist.unshift(entry);
+    commit("Added “" + entry.title + "” to the wishlist", true);
+    setView("wishlist");
+    const fresh = state.wishlist.find(b => b.id === entry.id);
+    if (fresh) openDrawer(fresh, "wishlist");
+  }
+
+  /* ── import / export ──────────────────────────────────────────────── */
+
+  function sheetRows(list) {
+    return list.map(b => ({
       Title: b.title, Author: b.author, Category: b.category, Language: b.language,
-      Read: b.read ? "TRUE" : "FALSE", Rating: b.rating || "",
-      Stars: b.rating ? STAR(b.rating) : "", Notes: b.notes,
+      Read: b.read ? "TRUE" : "FALSE",
+      Year: b.year || "", Pages: b.pages || "",
+      Series: b.series, "Series no": b.seriesNo || "",
+      Notes: b.notes,
     }));
   }
 
@@ -566,17 +709,21 @@
     try { X = await withXlsx(); }
     catch (e) { toast("Couldn't fetch the spreadsheet library — try CSV."); return; }
     const wb = X.utils.book_new();
-    X.utils.book_append_sheet(wb, X.utils.json_to_sheet(libraryRows()), "Library");
+    X.utils.book_append_sheet(wb, X.utils.json_to_sheet(sheetRows(state.books)), "Library");
+    if (state.wishlist.length)
+      X.utils.book_append_sheet(wb, X.utils.json_to_sheet(sheetRows(state.wishlist)), "Wishlist");
+    const counts = countsByCategory(), wishCounts = countsByCategory(state.wishlist);
     X.utils.book_append_sheet(wb, X.utils.json_to_sheet(
       state.categories.map(c => ({ Category: c.name, Color: c.color, Hex: hexOf(c.color),
-        Books: countsByCategory().get(c.name) || 0 }))), "Categories");
-    const counts = countsByCategory();
+        Books: counts.get(c.name) || 0, Wishlist: wishCounts.get(c.name) || 0 }))), "Categories");
     const summary = state.categories.map(c => {
-      const rs = state.books.filter(b => b.category === c.name && b.rating > 0);
-      return { Category: c.name, Books: counts.get(c.name) || 0,
-        Read: state.books.filter(b => b.category === c.name && b.read).length,
-        Rated: rs.length,
-        "Avg rating": rs.length ? +(rs.reduce((s, b) => s + b.rating, 0) / rs.length).toFixed(2) : "" };
+      const inCat = state.books.filter(b => b.category === c.name);
+      const pages = inCat.filter(b => b.pages);
+      return { Category: c.name, Books: inCat.length,
+        Read: inCat.filter(b => b.read).length,
+        Unread: inCat.filter(b => !b.read).length,
+        Pages: pages.reduce((s, b) => s + b.pages, 0) || "",
+        Wishlist: wishCounts.get(c.name) || 0 };
     });
     X.utils.book_append_sheet(wb, X.utils.json_to_sheet(summary), "Insights");
     const buf = X.write(wb, { bookType: "xlsx", type: "array" });
@@ -584,60 +731,70 @@
   }
 
   function exportCsv() {
-    const rows = libraryRows();
-    const cols = Object.keys(rows[0] || { Title: "", Author: "" });
+    const which = state.view === "wishlist" ? state.wishlist : state.books;
+    const list = sheetRows(which);
+    const cols = Object.keys(list[0] || { Title: "", Author: "" });
     const cell = (v) => '"' + String(v == null ? "" : v).replace(/"/g, '""') + '"';
-    const csv = "﻿" + [cols.join(","), ...rows.map(r => cols.map(c => cell(r[c])).join(","))].join("\r\n");
-    offer("Bibliotheca.csv", csv, "text/csv;charset=utf-8");
+    const csv = "﻿" + [cols.join(","), ...list.map(r => cols.map(c => cell(r[c])).join(","))].join("\r\n");
+    offer(state.view === "wishlist" ? "Bibliotheca-wishlist.csv" : "Bibliotheca.csv",
+      csv, "text/csv;charset=utf-8");
   }
 
   function exportJson() {
     offer("Bibliotheca-backup.json", JSON.stringify(
-      { books: state.books, categories: state.categories, version: 1,
-        exported: new Date().toISOString() }, null, 2), "application/json");
+      { books: state.books, wishlist: state.wishlist, categories: state.categories,
+        version: 2, exported: new Date().toISOString() }, null, 2), "application/json");
   }
 
   function importFile(file) {
     const reader = new FileReader();
     const isJson = /\.json$/i.test(file.name);
+    const into = state.view === "wishlist" ? "wishlist" : "books";
     reader.onload = async () => {
       try {
-        let books = [], cats = null;
+        let books = [], cats = null, wish = null;
         if (isJson) {
           const doc = JSON.parse(reader.result);
           books = (doc.books || []).map(normalizeBook);
+          if (Array.isArray(doc.wishlist)) wish = doc.wishlist.map(normalizeBook);
           if (Array.isArray(doc.categories) && doc.categories.length) cats = doc.categories;
         } else {
           let X;
           try { X = await withXlsx(); }
           catch (e) { toast("Couldn't fetch the spreadsheet library."); return; }
           const wb = X.read(new Uint8Array(reader.result), { type: "array" });
-          const sheet = wb.Sheets[wb.SheetNames.find(n => /librar|books|sheet1/i.test(n)) || wb.SheetNames[0]];
-          const raw = X.utils.sheet_to_json(sheet, { defval: "" });
-          books = raw.map(r => {
-            const pick = (...keys) => {
-              for (const k of keys) {
-                const hit = Object.keys(r).find(h => h.trim().toLowerCase() === k);
-                if (hit && String(r[hit]).trim() !== "") return String(r[hit]).trim();
-              }
-              return "";
-            };
-            const ratingRaw = pick("rating", "rating (1-5)", "stars");
-            const stars = (ratingRaw.match(/★/g) || []).length;
-            const readRaw = pick("read", "status").toLowerCase();
-            return normalizeBook({
-              title: pick("title"), author: pick("author"), category: pick("category"),
-              language: pick("language"),
-              read: readRaw === "true" || readRaw === "yes" || readRaw === "finished" || readRaw === "1",
-              rating: stars || Number(ratingRaw) || 0,
-              notes: pick("notes"),
-            });
-          }).filter(b => b.title);
+          const pickSheet = (re) => wb.SheetNames.find(n => re.test(n));
+          const parseSheet = (name) => {
+            const raw = X.utils.sheet_to_json(wb.Sheets[name], { defval: "" });
+            return raw.map(r => {
+              const pick = (...keys) => {
+                for (const k of keys) {
+                  const hit = Object.keys(r).find(h => h.trim().toLowerCase() === k);
+                  if (hit && String(r[hit]).trim() !== "") return String(r[hit]).trim();
+                }
+                return "";
+              };
+              const readRaw = pick("read", "status").toLowerCase();
+              return normalizeBook({
+                title: pick("title"), author: pick("author"), category: pick("category"),
+                language: pick("language"),
+                read: readRaw === "true" || readRaw === "yes" || readRaw === "finished" || readRaw === "1",
+                year: pick("year", "published", "year published"),
+                pages: pick("pages", "page count"),
+                series: pick("series"), seriesNo: pick("series no", "series number", "no"),
+                notes: pick("notes"),
+              });
+            }).filter(b => b.title);
+          };
+          const main = pickSheet(/librar|books|sheet1/i) || wb.SheetNames[0];
+          books = parseSheet(main);
+          const wishSheet = pickSheet(/wish/i);
+          if (wishSheet) wish = parseSheet(wishSheet);
 
-          const catSheetName = wb.SheetNames.find(n => /categor/i.test(n));
+          const catSheetName = pickSheet(/categor/i);
           if (catSheetName) {
-            const rows = X.utils.sheet_to_json(wb.Sheets[catSheetName], { defval: "" });
-            const parsed = rows.map(r => {
+            const rowsIn = X.utils.sheet_to_json(wb.Sheets[catSheetName], { defval: "" });
+            const parsed = rowsIn.map(r => {
               const k = Object.keys(r);
               const nameKey = k.find(h => /^category$/i.test(h.trim()));
               const colorKey = k.find(h => /^colou?r$/i.test(h.trim()));
@@ -648,25 +805,37 @@
           }
         }
 
-        if (!books.length) { toast("No books found in that file."); return; }
-        const replace = state.books.length > 0 &&
-          confirm(books.length + " books found.\n\nOK — replace the library with this file.\nCancel — add only books that aren't already here.");
+        // A wishlist view importing a plain list puts it on the wishlist.
+        if (into === "wishlist" && !wish) { wish = books; books = []; }
 
-        if (replace || !state.books.length) {
-          state.books = books;
-          if (cats) state.categories = cats.map(c => ({ name: c.name, color: c.color }));
-        } else {
-          const have = new Set(state.books.map(b => fold(b.title) + "|" + fold(b.author)));
-          const added = books.filter(b => !have.has(fold(b.title) + "|" + fold(b.author)));
-          state.books = state.books.concat(added);
-          if (cats) {
+        if (!books.length && !(wish && wish.length)) { toast("No books found in that file."); return; }
+
+        const target = books.length ? "books" : "wishlist";
+        const incoming = books.length ? books : wish;
+        const replace = state[target].length > 0 &&
+          confirm(incoming.length + " entries found.\n\nOK — replace the " +
+            (target === "books" ? "library" : "wishlist") + " with this file.\nCancel — add only what isn't already there.");
+
+        const mergeInto = (key, list) => {
+          if (!list) return;
+          if (replace && key === target) state[key] = list;
+          else {
+            const have = new Set(state[key].map(b => fold(b.title) + "|" + fold(b.author)));
+            state[key] = state[key].concat(list.filter(b => !have.has(fold(b.title) + "|" + fold(b.author))));
+          }
+        };
+        mergeInto("books", books.length ? books : null);
+        mergeInto("wishlist", wish);
+
+        if (cats) {
+          if (replace) state.categories = cats.map(c => ({ name: c.name, color: c.color }));
+          else {
             const names = new Set(state.categories.map(c => c.name));
             cats.forEach(c => { if (!names.has(c.name)) state.categories.push({ name: c.name, color: c.color }); });
           }
         }
         ensureCategoryColors();
-        commit(replace ? "Library replaced — " + state.books.length + " books" :
-                         "Merged — " + state.books.length + " books total", true);
+        commit("Imported — " + state.books.length + " books, " + state.wishlist.length + " wanted", true);
       } catch (e) {
         toast("Couldn't read that file.");
       }
@@ -686,14 +855,20 @@
 
   /* ── category suggestion, from your own shelf ─────────────────────── */
   function localSuggestion(title, author) {
+    const everything = state.books.concat(state.wishlist);
     if (author) {
-      const mine = state.books.filter(b => fold(b.author) === fold(author) && b.category);
+      const mine = everything.filter(b => fold(b.author) === fold(author) && b.category);
       if (mine.length) {
         const tally = new Map();
         mine.forEach(b => tally.set(b.category, (tally.get(b.category) || 0) + 1));
         const best = [...tally.entries()].sort((a, b) => b[1] - a[1])[0];
         return { category: best[0], why: best[1] + " other " + (best[1] === 1 ? "book" : "books") + " by this author" };
       }
+    }
+    const series = $("#fSeries").value.trim();
+    if (series) {
+      const sameSeries = everything.find(b => fold(b.series) === fold(series) && b.category);
+      if (sameSeries) return { category: sameSeries.category, why: "the rest of the series" };
     }
     const hay = fold(title + " " + $("#fNotes").value);
     const hit = state.categories.find(c => c.name.split(/[\s/]+/).some(w => w.length > 3 && hay.includes(fold(w))));
@@ -713,7 +888,8 @@
 
   function renameAuthor(from, to) {
     let n = 0;
-    state.books.forEach(b => { if (b.author === from) { b.author = to; n++; } });
+    [state.books, state.wishlist].forEach(list =>
+      list.forEach(b => { if (b.author === from) { b.author = to; n++; } }));
     commit("Renamed " + n + " " + (n === 1 ? "entry" : "entries") + " to “" + to + "”", true);
   }
 
@@ -726,16 +902,23 @@
     toastTimer = setTimeout(() => t.classList.remove("show"), 2600);
   }
 
+  const TITLES = { library: "Library", wishlist: "Wishlist", insights: "Insights",
+                   checks: "Checks", categories: "Categories" };
+
   function setView(v) {
     state.view = v;
     $$(".nav button").forEach(b => b.setAttribute("aria-current", String(b.dataset.view === v)));
-    $$(".view").forEach(s => { s.hidden = s.id !== "view-" + v; });
-    $("#viewTitle").textContent = { library: "Library", insights: "Insights", checks: "Checks", categories: "Categories" }[v];
-    $("#libControls").style.display = v === "library" ? "" : "none";
-    $("#catFilters").style.display = v === "library" ? "" : "none";
-    const hideAdd = v === "categories" || v === "checks";
-    $("#btnAdd").style.display = hideAdd ? "none" : "";
-    $("#btnAddFab").hidden = hideAdd;
+    $$(".view").forEach(s => { s.hidden = s.id !== "view-" + (isList() ? "list" : v); });
+    $("#viewTitle").textContent = TITLES[v];
+    const list = isList();
+    $("#libControls").style.display = list ? "" : "none";
+    $("#catFilters").style.display = list ? "" : "none";
+    $("#btnAdd").style.display = list ? "" : "none";
+    $("#btnAdd").textContent = v === "wishlist" ? "Add to wishlist" : "Add book";
+    $("#btnAddFab").hidden = !list;
+    $("#q").placeholder = v === "wishlist"
+      ? "Search the wishlist…" : "Search titles, authors, notes…";
+    document.body.classList.toggle("wishing", v === "wishlist");
     renderAll();
     window.scrollTo(0, 0);
   }
@@ -756,37 +939,25 @@
     if (t.id === "clearCats") { state.cats.clear(); renderFilters(); renderRows(); return; }
 
     if (t.id === "emptyAction") {
-      if (state.books.length) { state.q = ""; $("#q").value = ""; state.cats.clear(); state.lang = ""; state.readFilter = "";
+      if (rows().length) { state.q = ""; $("#q").value = ""; state.cats.clear(); state.lang = ""; state.readFilter = "";
         $("#fLang").value = ""; $("#fRead").value = ""; renderFilters(); renderRows(); }
       else openDrawer(null);
-      return;
-    }
-
-    const star = closest("[data-star]");
-    if (star) {
-      e.stopPropagation();
-      const holder = star.closest("[data-stars]");
-      const v = Number(star.dataset.star);
-      if (holder) {
-        const b = state.books.find(x => x.id === holder.dataset.stars);
-        if (b) { b.rating = b.rating === v ? 0 : v; if (b.rating && !b.read) b.read = true; commit(); }
-      } else if (state.draft) {
-        state.draft.rating = state.draft.rating === v ? 0 : v;
-        drawStars();
-      }
       return;
     }
 
     const readBtn = closest("[data-read]");
     if (readBtn) {
       e.stopPropagation();
-      const b = state.books.find(x => x.id === readBtn.dataset.read);
+      const b = rows().find(x => x.id === readBtn.dataset.read);
       if (b) { b.read = !b.read; commit(); }
       return;
     }
 
+    const moveBtn = closest("[data-move]");
+    if (moveBtn) { e.stopPropagation(); return moveToLibrary(moveBtn.dataset.move); }
+
     const row = closest(".row");
-    if (row) { const b = state.books.find(x => x.id === row.dataset.id); if (b) openDrawer(b); return; }
+    if (row) { const b = rows().find(x => x.id === row.dataset.id); if (b) openDrawer(b); return; }
 
     const checkHead = closest("[data-check]");
     if (checkHead) {
@@ -799,34 +970,48 @@
     if (fix) {
       const kind = fix.dataset.fix;
       const b = state.books.find(x => x.id === fix.dataset.id);
-      if (kind === "open" && b) openDrawer(b);
-      if (kind === "markread" && b) { b.read = true; commit("Marked read", true); }
+      const w = state.wishlist.find(x => x.id === fix.dataset.id);
+      if (kind === "open" && b) { setView("library"); openDrawer(b, "books"); }
+      if (kind === "openwish" && w) { setView("wishlist"); openDrawer(w, "wishlist"); }
       if (kind === "delete" && b && confirm("Delete “" + b.title + "”?")) {
         state.books = state.books.filter(x => x.id !== b.id); commit("Deleted", true);
+      }
+      if (kind === "delwish" && w && confirm("Remove “" + w.title + "” from the wishlist?")) {
+        state.wishlist = state.wishlist.filter(x => x.id !== w.id); commit("Removed from the wishlist", true);
       }
       if (kind === "addcat" && b) {
         state.categories.push({ name: b.category, color: "" }); ensureCategoryColors();
         commit("Added category “" + b.category + "”", true);
       }
+      if (kind === "wantit") wantMissing(fix.dataset);
       if (kind === "mergeA") renameAuthor(fix.dataset.b, fix.dataset.a);
       if (kind === "mergeB") renameAuthor(fix.dataset.a, fix.dataset.b);
+      return;
+    }
+
+    const pick = closest("[data-pick]");
+    if (pick) {
+      const i = Number(pick.dataset.pick);
+      state.openCat = state.openCat === i ? null : i;
+      renderCategories();
       return;
     }
 
     const swatch = closest(".swatches button");
     if (swatch) {
       const c = state.categories[Number(swatch.dataset.i)];
-      if (c) { c.color = swatch.dataset.color; commit(); }
+      if (c) { c.color = swatch.dataset.color; state.openCat = null; commit(); }
       return;
     }
 
     const del = closest("[data-delcat]");
     if (del) {
       const i = Number(del.dataset.delcat), c = state.categories[i];
-      const n = countsByCategory().get(c.name) || 0;
-      if (n && !confirm("“" + c.name + "” is on " + n + " book" + (n === 1 ? "" : "s") +
-        ". Remove it? Those books become uncategorised.")) return;
-      state.books.forEach(b => { if (b.category === c.name) b.category = ""; });
+      const n = (countsByCategory().get(c.name) || 0) + (countsByCategory(state.wishlist).get(c.name) || 0);
+      if (n && !confirm("“" + c.name + "” is on " + n + " entr" + (n === 1 ? "y" : "ies") +
+        ". Remove it? Those become uncategorised.")) return;
+      [state.books, state.wishlist].forEach(list =>
+        list.forEach(b => { if (b.category === c.name) b.category = ""; }));
       state.categories.splice(i, 1);
       commit("Removed “" + c.name + "”", true);
       return;
@@ -843,12 +1028,14 @@
     if (t.id === "btnMoreAuthors") { state.showAllAuthors = !state.showAllAuthors; renderInsights(); return; }
     if (t.id === "btnAdd" || t.id === "btnAddFab") return openDrawer(null);
     if (t.id === "btnSave") return saveDrawer();
+    if (t.id === "btnBought") return moveToLibrary(state.editing, true);
     if (t.id === "btnCancel" || t.id === "drawerClose" || t.id === "scrim") return closeDrawer();
     if (t.id === "btnDelete") {
-      const b = state.books.find(x => x.id === state.editing);
-      if (b && confirm("Delete “" + b.title + "”?")) {
-        state.books = state.books.filter(x => x.id !== b.id);
-        closeDrawer(); commit("Deleted", true);
+      const where = state.editingIn;
+      const b = state[where].find(x => x.id === state.editing);
+      if (b && confirm((where === "wishlist" ? "Remove “" : "Delete “") + b.title + "”?")) {
+        state[where] = state[where].filter(x => x.id !== b.id);
+        closeDrawer(); commit(where === "wishlist" ? "Removed" : "Deleted", true);
       }
       return;
     }
@@ -884,7 +1071,8 @@
       if (!c || !next || next === c.name) { renderCategories(); return; }
       if (state.categories.some((x, j) => j !== i && x.name === next)) { toast("That category already exists."); renderCategories(); return; }
       const old = c.name;
-      state.books.forEach(b => { if (b.category === old) b.category = next; });
+      [state.books, state.wishlist].forEach(list =>
+        list.forEach(b => { if (b.category === old) b.category = next; }));
       c.name = next;
       if (state.cats.has(old)) { state.cats.delete(old); state.cats.add(next); }
       commit("Renamed to “" + next + "”", true);
@@ -905,13 +1093,13 @@
       if (e.key === "Enter" && state.draft && document.activeElement.id !== "fNotes") saveDrawer();
       return;
     }
-    if (e.key === "/") { e.preventDefault(); setView("library"); $("#q").focus(); }
-    if (e.key.toLowerCase() === "n") { e.preventDefault(); openDrawer(null); }
+    if (e.key === "/") { e.preventDefault(); if (!isList()) setView("library"); $("#q").focus(); }
+    if (e.key.toLowerCase() === "n") { e.preventDefault(); if (isList()) openDrawer(null); }
   });
 
   document.addEventListener("keypress", (e) => {
     if (e.key === "Enter" && e.target.classList && e.target.classList.contains("row")) {
-      const b = state.books.find(x => x.id === e.target.dataset.id);
+      const b = rows().find(x => x.id === e.target.dataset.id);
       if (b) openDrawer(b);
     }
   });
@@ -928,20 +1116,42 @@
   /* ── go ───────────────────────────────────────────────────────────── */
   document.body.classList.add("tinted");
 
+  // Files written by the first version of the app carry a rating on every book
+  // and no wishlist at all.
+  function needsUpgrade(doc) {
+    if (!doc) return false;
+    if (!Array.isArray(doc.wishlist)) return true;
+    return (doc.books || []).some(b => "rating" in b) ||
+           (doc.wishlist || []).some(b => "rating" in b);
+  }
+
   window.Bibliotheca = {
     boot(doc) {
       adopt(doc);
+      if (needsUpgrade(doc)) {
+        Store.upgrade(payload(), "Bibliotheca: drop ratings, add the wishlist");
+      }
       Store.on("data", (fresh, info) => {
-        const wasEditing = state.editing;
+        const wasEditing = state.editing, wasIn = state.editingIn;
         adopt(fresh);
         if (info && info.incoming) toast(info.incoming + " change" + (info.incoming === 1 ? "" : "s") + " from another device");
         else if (info && info.reason === "remote") toast("Updated from another device");
-        if (wasEditing && !state.books.some(b => b.id === wasEditing)) closeDrawer();
+        if (wasEditing && !state[wasIn].some(b => b.id === wasEditing)) closeDrawer();
       });
     },
     payload: payload,
+    // gate.js hands the setup file through here, so the very first commit is
+    // already in the current shape rather than needing an upgrade behind it.
+    normalize: (doc) => ({
+      books: ((doc && doc.books) || []).map(normalizeBook),
+      wishlist: ((doc && doc.wishlist) || []).map(normalizeBook),
+      categories: ((doc && doc.categories) || [])
+        .map(c => ({ name: String(c.name || ""), color: c.color || "" })).filter(c => c.name),
+    }),
     toast: toast,
     adopt: adopt,
+    setView: setView,
     state: state,
+    PALETTE: PALETTE,
   };
 })();

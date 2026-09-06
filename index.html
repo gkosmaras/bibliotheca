@@ -12,8 +12,8 @@
 <link rel="apple-touch-icon" href="icon.svg">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="preload" href="fonts/literata-400-latin.woff2" as="font" type="font/woff2" crossorigin>
-<link rel="stylesheet" href="fonts.css">
-<link rel="stylesheet" href="app.css">
+<link rel="stylesheet" href="fonts.css?v=2">
+<link rel="stylesheet" href="app.css?v=2">
 </head>
 <body class="gated">
 
@@ -129,6 +129,7 @@
 
     <div class="nav" role="tablist">
       <button data-view="library" aria-current="true" role="tab"><span class="lbl">Library</span> <span class="count mono" id="navLibrary">—</span></button>
+      <button data-view="wishlist" role="tab"><span class="lbl">Wishlist</span> <span class="count mono" id="navWishlist">—</span></button>
       <button data-view="insights" role="tab"><span class="lbl">Insights</span> <span class="count mono" id="navInsights">—</span></button>
       <button data-view="checks" role="tab"><span class="lbl">Checks</span> <span class="count mono" id="navChecks">—</span></button>
       <button data-view="categories" role="tab"><span class="lbl">Categories</span> <span class="count mono" id="navCats">—</span></button>
@@ -169,24 +170,23 @@
           <option value="">Read &amp; unread</option>
           <option value="yes">Read</option>
           <option value="no">Unread</option>
-          <option value="rated">Rated</option>
-          <option value="unrated">Unrated</option>
         </select>
         <label class="toggle"><input type="checkbox" id="tint" checked> Tint rows</label>
       </div>
       <div class="filterbar" id="catFilters"></div>
     </div>
 
-    <!-- LIBRARY -->
-    <section class="view" id="view-library">
+    <!-- LIBRARY and WISHLIST share one ledger -->
+    <section class="view" id="view-list">
       <div class="ledger">
         <div class="ledger-head">
           <button data-sort="title">Title <span class="arrow" data-arrow="title"></span></button>
           <button data-sort="author">Author <span class="arrow" data-arrow="author"></span></button>
           <button data-sort="category">Category <span class="arrow" data-arrow="category"></span></button>
           <button data-sort="language">Language <span class="arrow" data-arrow="language"></span></button>
-          <button data-sort="rating">Rating <span class="arrow" data-arrow="rating"></span></button>
-          <button data-sort="read" title="Read">✓</button>
+          <button data-sort="year">Year <span class="arrow" data-arrow="year"></span></button>
+          <button data-sort="pages">Pages <span class="arrow" data-arrow="pages"></span></button>
+          <button data-sort="read" title="Read" class="readcol">✓</button>
         </div>
         <div id="rows"></div>
       </div>
@@ -240,15 +240,30 @@
       <div class="hint" id="catHint" hidden></div>
       <button class="btn sm" id="btnSuggest" style="align-self:flex-start; margin-top:2px;">Suggest category</button>
     </div>
-    <div class="field row2">
+    <div class="field row3">
       <div class="field">
         <label for="fLangIn">Language</label>
         <input type="text" id="fLangIn" list="langList" autocomplete="off">
         <datalist id="langList"></datalist>
       </div>
       <div class="field">
-        <label>Rating</label>
-        <div class="stars big" id="fStars"></div>
+        <label for="fYear">Year</label>
+        <input type="text" id="fYear" inputmode="numeric" autocomplete="off" placeholder="1949">
+      </div>
+      <div class="field">
+        <label for="fPages">Pages</label>
+        <input type="text" id="fPages" inputmode="numeric" autocomplete="off" placeholder="328">
+      </div>
+    </div>
+    <div class="field row2 seriesrow">
+      <div class="field">
+        <label for="fSeries">Series</label>
+        <input type="text" id="fSeries" list="seriesList" autocomplete="off" placeholder="none">
+        <datalist id="seriesList"></datalist>
+      </div>
+      <div class="field">
+        <label for="fSeriesNo">No.</label>
+        <input type="text" id="fSeriesNo" inputmode="numeric" autocomplete="off">
       </div>
     </div>
     <div class="field">
@@ -264,6 +279,7 @@
   <footer>
     <button class="btn primary" id="btnSave">Save</button>
     <button class="btn ghost" id="btnCancel">Cancel</button>
+    <button class="btn" id="btnBought" hidden title="Move it to the library">Bought it</button>
     <span style="flex:1"></span>
     <button class="btn danger sm" id="btnDelete" hidden>Delete</button>
   </footer>
@@ -328,9 +344,9 @@
 
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
-<script src="config.js"></script>
-<script src="store.js"></script>
-<script src="app.js"></script>
-<script src="gate.js"></script>
+<script src="config.js?v=2"></script>
+<script src="store.js?v=2"></script>
+<script src="app.js?v=2"></script>
+<script src="gate.js?v=2"></script>
 </body>
 </html>

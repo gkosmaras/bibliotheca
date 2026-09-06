@@ -148,9 +148,10 @@
       try {
         const doc = JSON.parse(r.result);
         if (!Array.isArray(doc.books)) throw new Error("no books array");
-        seed = { books: doc.books, categories: Array.isArray(doc.categories) ? doc.categories : [] };
-        $("#seedNote").textContent = "✓ " + doc.books.length + " books and " +
-          seed.categories.length + " categories ready to import.";
+        seed = window.Bibliotheca.normalize(doc);
+        $("#seedNote").textContent = "✓ " + seed.books.length + " books and " +
+          seed.categories.length + " categories ready to import" +
+          (seed.wishlist.length ? ", plus " + seed.wishlist.length + " on the wishlist" : "") + ".";
         $("#seedNote").className = "gate-msg good";
         $("#seedNote").hidden = false;
       } catch (err) {
