@@ -75,6 +75,36 @@ Because it is the same shape, everything else works on it too: search, category
 filters, Excel and CSV export, and a check that warns when something on the
 wishlist is already on your shelf.
 
+## The guest door
+
+Off by default. Switch it on in **Storage** and the lock screen grows an
+**Enter as guest** button that opens the shelf read-only, with no password.
+
+It works by publishing a second copy, `data/guest.json`, encrypted under its own
+generated passphrase. Because the button has to work without anyone typing
+anything, that passphrase is published in the same file. Be clear-eyed about
+what that buys:
+
+- **It does** keep your shelf out of the repository, out of GitHub code search
+  and out of search engines. The file is ciphertext; nothing greps.
+- **It does not** keep it from anyone holding the link. They can read the
+  passphrase out of the file, or simply click the button.
+
+So: obscurity, not secrecy. Treat guest access as "my reading list is public to
+anyone I give the address to", because that is what it is.
+
+Read-only is the part that *is* guaranteed. A guest never opens your vault, so
+their browser holds no write token at all — the restriction is a missing
+credential, not a hidden button. Calling the save function by hand from the
+console does nothing, and an unauthenticated write to GitHub is refused.
+
+Switching **One click, no passphrase** off removes the key from the published
+file. The button then asks for the passphrase, which you hand out yourself, and
+the guest copy becomes a real lock rather than a curtain.
+
+The guest copy is rewritten every time you save, so it never lags. Closing the
+door deletes it from the repository.
+
 ## Data shape
 
 Version 2. Ratings are gone; `year`, `pages`, `series` and `seriesNo` are new,
@@ -118,5 +148,8 @@ occasionally, and worth doing before you change anything drastic.
   yours does; every device picks it up on its next unlock.
 - The page asks GitHub about 150 times an hour at most while open, against a
   limit of 5,000.
+- A guest polls GitHub unauthenticated, where the allowance is 60 requests an
+  hour rather than 5,000, so their copy refreshes every five minutes instead of
+  every twenty-five seconds.
 - Asset URLs carry a `?v=` marker. Bump it in `index.html` whenever you change
   a `.js` or `.css` file, or browsers will keep serving the old one.

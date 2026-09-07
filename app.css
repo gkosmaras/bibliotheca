@@ -410,6 +410,47 @@ body.wishing .ledger-head .readcol { visibility: hidden; }
 .toast.show { opacity: 1; transform: translateX(-50%); }
 
 
+/* ── the guest door ─────────────────────────────────────────────────── */
+.gate-or {
+  display: flex; align-items: center; gap: 10px; margin: 2px 0;
+  font-family: var(--mono); font-size: 10px; letter-spacing: .14em;
+  text-transform: uppercase; color: var(--ink-3);
+}
+.gate-or::before, .gate-or::after { content: ""; flex: 1; height: 1px; background: var(--rule); }
+
+.guestbar {
+  position: sticky; top: 0; z-index: 45;
+  display: flex; align-items: center; gap: 9px;
+  padding: 7px 16px; font-size: 12.5px;
+  background: color-mix(in srgb, var(--warn) 14%, var(--surface));
+  border-bottom: 1px solid color-mix(in srgb, var(--warn) 35%, transparent);
+  color: var(--ink-2);
+}
+.guestbar .dot { background: var(--warn); }
+.guestbar .linky { margin-left: auto; color: var(--ink); font-weight: 500; }
+
+/* read-only: things that would have been controls, standing still */
+.readmark.still {
+  border-style: solid; cursor: default; pointer-events: none;
+  background: var(--ink); border-color: var(--ink); color: var(--inverse);
+}
+.readmark.still[aria-hidden="true"] { background: none; border-color: var(--rule-2); color: transparent; }
+body.readonly .row { cursor: pointer; }
+.cat-row.still { grid-template-columns: 26px minmax(0,1fr) auto 74px; }
+.cat-row .cat-name { font-family: var(--serif); font-size: 14px; }
+.colourpick.still {
+  border: 0; background: none; color: var(--ink-3); font-size: 12.5px;
+  font-family: var(--mono); min-width: 0; padding: 0;
+}
+.passout {
+  font-family: var(--mono); font-size: 12.5px; word-break: break-all;
+  background: var(--bg); border: 1px solid var(--rule-2); border-radius: 5px;
+  padding: 8px 10px; display: block; user-select: all;
+}
+#drawer input:disabled, #drawer select:disabled, #drawer textarea:disabled {
+  opacity: 1; color: var(--ink); background: var(--surface-2); border-color: var(--rule);
+}
+
 /* ── the door ───────────────────────────────────────────────────────── */
 body.gated .shell, body.gated .fab { display: none; }
 body.no-scroll { overflow: hidden; }
@@ -644,6 +685,8 @@ a.btn { text-decoration: none; display: inline-block; }
 
 
   .toast { bottom: calc(74px + env(safe-area-inset-bottom)); }
+  .guestbar { padding: 6px 14px; font-size: 12px; }
+  .cat-row.still { grid-template-columns: 20px minmax(0,1fr) auto; }
   .gate-card { padding: 22px 18px 20px; }
 }
 

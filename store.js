@@ -24,6 +24,7 @@
     vaultRepo: "",                      // blank = same repo as the app
     vaultPath: "data/vault.json",
     dataPath: "data/library.json",
+    guestPath: "data/guest.json",
   };
 
   // Reads the repo out of the address bar so a fresh clone needs no editing:
@@ -84,6 +85,11 @@
   /* ── crypto ──────────────────────────────────────────────────────────── */
 
   const KDF_ITER = 600000;             // ~0.4s on a phone, ~0.1s on a laptop
+
+  // The guest passphrase is published alongside the guest copy so the button
+  // can be one click. Stretching it hard would only slow guests down; it is
+  // guarding nothing. Say so plainly rather than performing security.
+  const GUEST_ITER = 100000;
 
   async function deriveKey(password, salt, iter) {
     const base = await crypto.subtle.importKey("raw", utf8.encode(password), "PBKDF2", false, ["deriveKey"]);
@@ -223,6 +229,14 @@
     return { sha: r.json.content.sha };
   }
 
+  async function deleteFile(repo, path, token, sha, message) {
+    await gh("/repos/" + Store.cfg.owner + "/" + repo + "/contents/" + path, {
+      method: "DELETE",
+      token: token,
+      body: { message: message, sha: sha, branch: Store.cfg.branch },
+    });
+  }
+
   /* ── three-way merge, so two devices can both be wrong at once ───────── */
 
   const fingerprint = (b) => b ? [b.title, b.author, b.category, b.language,
@@ -287,7 +301,12 @@
     cfg: DEFAULTS,
     key: null,               // AES key, in memory only (or IndexedDB if remembered)
     token: null,
-    state: "cold",           // cold | needs-setup | locked | ready
+    state: "cold",           // cold | needs-setup | locked | ready | guest
+    guest: false,            // true once someone came in through the guest door
+    guestPass: null,         // owner-side: the passphrase the guest copy uses
+    guestOneClick: true,     // publish the passphrase, so guests need not type it
+    guestSha: null,
+    guestKey: null,
     sha: null,               // sha of data/library.json as we last saw it
     etag: null,
     rev: 0,                  // bumped on every successful write; a poll that
@@ -390,6 +409,7 @@
       }
       this.key = key;
       this.token = secret.token;
+      this.adoptSecret(secret);
       if (remember) await this.remember();
       return this.load();
     },
@@ -413,6 +433,7 @@
       try {
         const secret = await open(key, this.vault);
         this.key = key; this.token = secret.token;
+        this.adoptSecret(secret);
         return await this.load();
       } catch (e) {
         await this.signOut(false);       // password was changed elsewhere
@@ -448,7 +469,7 @@
 
     // Called on every edit. Coalesces a burst of keystrokes into one commit.
     save(payload, immediate) {
-      if (this.state !== "ready") return;
+      if (this.guest || this.state !== "ready") return;
       this.pending = clone(payload);
       this.dirty = true;
       this.status("busy", "saving…");
@@ -507,6 +528,13 @@
       this.sha = w.sha;
       this.etag = null;                  // the ETag we held is stale now
       this.base = clone(payload);
+
+      // The guest copy trails the real one. If it fails, the save still stood —
+      // say so rather than pretending the whole write failed.
+      if (this.guestPass) {
+        try { await this.publishGuest(payload); }
+        catch (e) { this.status("warn", "saved, but the guest copy is behind"); }
+      }
       return payload;
     },
 
@@ -528,7 +556,9 @@
     startPolling() {
       if (this.poller) return;
       const tick = () => { if (document.visibilityState === "visible") this.poll(); };
-      this.poller = setInterval(tick, 25000);
+      // A guest reads GitHub unauthenticated, where the hourly allowance is 60,
+      // not 5,000. Once every five minutes keeps well inside it.
+      this.poller = setInterval(tick, this.guest ? 300000 : 25000);
       window.addEventListener("focus", () => this.poll());
       document.addEventListener("visibilitychange", () => {
         if (document.visibilityState === "visible") this.poll();
@@ -536,6 +566,7 @@
     },
 
     async poll() {
+      if (this.guest) return this.pollGuest();
       if (this.state !== "ready" || this.dirty || this.inflight || this.polling) return;
       this.polling = true;
       const rev = this.rev;
@@ -559,6 +590,141 @@
       } catch (e) {
         if (e.code === "offline") this.status("warn", "no connection");
       } finally { this.polling = false; }
+    },
+
+    /* ── the guest door ────────────────────────────────────────────────────
+       A second copy of the shelf, encrypted under its own passphrase. The
+       passphrase is generated once and kept in the owner's vault; when
+       one-click entry is on it is also published beside the ciphertext, which
+       is what lets a guest in without typing anything.
+
+       Be clear about what that is worth: anyone who opens the page can read
+       the passphrase out of the file and decrypt the copy. It stops the shelf
+       being readable from the repository, from GitHub code search and from
+       search engines. It is not a secret from someone holding the link.
+
+       What it does guarantee is read-only. A guest never opens the owner's
+       vault, so no write token exists in that browser at all — the restriction
+       is the absence of a credential, not a hidden button.                   */
+
+    adoptSecret(secret) {
+      const g = secret && secret.guest;
+      if (g && g.pass) { this.guestPass = g.pass; this.guestOneClick = g.oneClick !== false; }
+      else { this.guestPass = null; }
+    },
+
+    async guestStatus() {
+      const f = await readFile(this.cfg.dataRepo, this.cfg.guestPath, null);
+      if (!f) return { on: false };
+      this.guestDoc = f.doc; this.guestSha = f.sha;
+      return { on: true, oneClick: !!f.doc.key };
+    },
+
+    async enterAsGuest(passphrase) {
+      if (!this.guestDoc) {
+        const f = await readFile(this.cfg.dataRepo, this.cfg.guestPath, null);
+        if (!f) throw new Error("This library has no guest access.");
+        this.guestDoc = f.doc; this.guestSha = f.sha;
+      }
+      const doc = this.guestDoc;
+      const pass = passphrase || doc.key;
+      if (!pass) throw new Error("A guest passphrase is needed for this library.");
+      const kdf = doc.kdf || {};
+      const key = await deriveKey(String(pass).trim(), unb64(kdf.salt), kdf.iterations || GUEST_ITER);
+      let payload;
+      try { payload = await open(key, doc); }
+      catch (e) { throw new Error("That guest passphrase doesn't open this library."); }
+
+      this.guest = true;
+      this.guestKey = key;
+      this.guestPassUsed = String(pass).trim();
+      this.key = null; this.token = null;      // nothing here can write. At all.
+      this.state = "guest";
+      this.sha = this.guestSha;
+      this.startPolling();
+      this.status("on", "read-only");
+      return payload;
+    },
+
+    // Owner side: turn the guest door on, off, or re-publish behind it.
+    async setGuestAccess(on, payload, oneClick) {
+      if (this.state !== "ready") throw new Error("Unlock the library first.");
+      if (on) {
+        if (!this.guestPass) this.guestPass = makePassphrase();
+        if (oneClick != null) this.guestOneClick = !!oneClick;
+        await this.saveSecret();
+        await this.publishGuest(payload, "Bibliotheca: open the guest door");
+      } else {
+        if (this.guestSha) {
+          await deleteFile(this.cfg.dataRepo, this.cfg.guestPath, this.token, this.guestSha,
+            "Bibliotheca: close the guest door");
+        }
+        this.guestSha = null; this.guestDoc = null;
+        this.guestPass = null;
+        await this.saveSecret();
+      }
+      return true;
+    },
+
+    // Re-seal the owner vault around whatever the secret now holds.
+    async saveSecret() {
+      const secret = await open(this.key, this.vault);
+      secret.guest = this.guestPass ? { pass: this.guestPass, oneClick: this.guestOneClick } : undefined;
+      if (!this.guestPass) delete secret.guest;
+      const sealed = await seal(this.key, secret);
+      const vaultDoc = Object.assign({}, this.vault, { iv: sealed.iv, ct: sealed.ct });
+      const v = await writeFile(this.cfg.vaultRepo, this.cfg.vaultPath, this.token, vaultDoc,
+        this.vaultSha, "Bibliotheca: update the vault");
+      this.vault = vaultDoc; this.vaultSha = v.sha;
+    },
+
+    async publishGuest(payload, message) {
+      if (!this.guestPass) return;
+      // Reuse the salt. A fresh one would change the key, and any guest with the
+      // page already open would find their next poll undecryptable.
+      const existing = this.guestDoc && this.guestDoc.kdf && this.guestDoc.kdf.salt;
+      const salt = existing ? unb64(existing) : crypto.getRandomValues(new Uint8Array(16));
+      const key = await deriveKey(this.guestPass, salt, GUEST_ITER);
+      const body = {
+        books: payload.books, wishlist: payload.wishlist || [], categories: payload.categories,
+        version: 2, updatedAt: new Date().toISOString(), source: "Bibliotheca",
+      };
+      const sealed = await seal(key, body);
+      const doc = {
+        app: "bibliotheca", kind: "guest", v: 1,
+        kdf: { name: "PBKDF2", hash: "SHA-256", iterations: GUEST_ITER, salt: b64(salt) },
+        iv: sealed.iv, ct: sealed.ct,
+        note: "A read-only copy of the shelf. The key below is deliberately in the open: " +
+              "it is what lets the Enter as guest button work without a password. " +
+              "This keeps the shelf out of code search, not out of reach.",
+      };
+      if (this.guestOneClick) doc.key = this.guestPass;
+      const w = await writeFile(this.cfg.dataRepo, this.cfg.guestPath, this.token, doc,
+        this.guestSha, message || "Bibliotheca: update the guest copy");
+      this.guestSha = w.sha; this.guestDoc = doc;
+    },
+
+    async pollGuest() {
+      if (this.polling) return;
+      this.polling = true;
+      try {
+        const f = await readFile(this.cfg.dataRepo, this.cfg.guestPath, null, this.etag);
+        if (!f || f.notModified || f.sha === this.sha) { if (f && f.etag) this.etag = f.etag; return; }
+        let payload;
+        try {
+          payload = await open(this.guestKey, f.doc);
+        } catch (err) {
+          // The copy was re-sealed under a different salt — derive again.
+          const kdf = f.doc.kdf || {};
+          const pass = f.doc.key || this.guestPassUsed;
+          if (!pass) return;
+          this.guestKey = await deriveKey(String(pass).trim(), unb64(kdf.salt), kdf.iterations || GUEST_ITER);
+          payload = await open(this.guestKey, f.doc);
+        }
+        this.sha = f.sha; this.etag = f.etag; this.guestDoc = f.doc; this.guestSha = f.sha;
+        this.emit("data", payload, { reason: "remote" });
+      } catch (e) { /* a guest can do nothing about it either way */ }
+      finally { this.polling = false; }
     },
 
     /* ── account chores ────────────────────────────────────────────────── */
@@ -593,7 +759,8 @@
       const key = await deriveKey(password, unb64(kdf.salt), kdf.iterations || KDF_ITER);
       try { await open(key, this.vault); }
       catch (e) { throw new Error("Wrong password."); }
-      const sealed = await seal(key, { token: newToken.trim(), created: new Date().toISOString() });
+      const sealed = await seal(key, Object.assign({}, await open(key, this.vault),
+        { token: newToken.trim(), created: new Date().toISOString() }));
       const vaultDoc = Object.assign({}, this.vault, { iv: sealed.iv, ct: sealed.ct });
       const v = await writeFile(this.cfg.vaultRepo, this.cfg.vaultPath, newToken.trim(), vaultDoc,
         this.vaultSha, "Bibliotheca: replace access token");
@@ -612,6 +779,21 @@
   };
 
   /* ── helpers ─────────────────────────────────────────────────────────── */
+
+  const GUEST_WORDS = ("amber anchor arbor aspen beacon birch bramble bronze brook cedar cinder " +
+    "cobalt copper coral cove cypress delta ember fathom fennel fern ferry flint garnet glacier " +
+    "glade harbor hazel heather hollow indigo ivory juniper kelp lantern larch laurel lichen " +
+    "lilac linen marble marsh meadow mineral mint mosaic moss nectar oasis obsidian ochre olive " +
+    "onyx opal orchard otter pebble pewter pine pollen poplar prairie prism quarry quartz ravine " +
+    "reef ribbon ridge rosin saffron sage sandal sequoia shale shore sierra silver slate solar " +
+    "sorrel spindle spruce summit sumac thicket thistle thorn timber topaz tundra umber valley " +
+    "velvet vessel vista walnut wharf wheat willow winter yarrow zenith zephyr").split(" ");
+
+  function makePassphrase(n) {
+    const picks = new Uint32Array(n || 6);
+    crypto.getRandomValues(picks);
+    return Array.from(picks, x => GUEST_WORDS[x % GUEST_WORDS.length]).join("-");
+  }
 
   const clone = (o) => JSON.parse(JSON.stringify(o));
   const clock = () => new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });

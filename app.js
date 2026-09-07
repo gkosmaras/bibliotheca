@@ -43,7 +43,12 @@
     sort: { key: "title", dir: 1 },
     editing: null, editingIn: "books", draft: null,
     openChecks: new Set(), openCat: null, showAllAuthors: false,
+    readOnly: false,
   };
+
+  // A guest holds no write token, so nothing here *can* reach GitHub. This flag
+  // is about not offering doors that lead nowhere.
+  const ro = () => state.readOnly;
 
   const $  = (sel) => document.querySelector(sel);
   const $$ = (sel) => Array.from(document.querySelectorAll(sel));
@@ -105,6 +110,7 @@
   }
 
   function commit(message, immediate) {
+    if (ro()) { toast("You're viewing as a guest — this shelf is read-only."); return; }
     Store.save(payload(), immediate);
     renderAll();
     if (message) toast(message);
@@ -245,11 +251,14 @@
         '<div class="lang truncate">' + esc(b.language) + "</div>" +
         '<div class="year mono">' + (b.year || '<span class="unset">—</span>') + "</div>" +
         '<div class="pages mono">' + (b.pages || '<span class="unset">—</span>') + "</div>" +
-        (wish
-          ? '<button class="movemark" data-move="' + b.id + '" title="I bought it — move to the library" ' +
-            'aria-label="Move to the library">→</button>'
-          : '<button class="readmark" data-read="' + b.id + '" aria-pressed="' + b.read + '" ' +
-            'aria-label="' + (b.read ? "Mark as unread" : "Mark as read") + '">✓</button>') +
+        (ro()
+          ? '<span class="readmark still" aria-hidden="' + !b.read + '" title="' +
+            (b.read ? "Read" : "Unread") + '">✓</span>'
+          : wish
+            ? '<button class="movemark" data-move="' + b.id + '" title="I bought it — move to the library" ' +
+              'aria-label="Move to the library">→</button>'
+            : '<button class="readmark" data-read="' + b.id + '" aria-pressed="' + b.read + '" ' +
+              'aria-label="' + (b.read ? "Mark as unread" : "Mark as read") + '">✓</button>') +
       "</div>";
     }).join("");
   }
@@ -494,7 +503,7 @@
   }
 
   function renderFix(check, it) {
-    const acts = (it.acts || []).map(a => {
+    const acts = ro() ? "" : (it.acts || []).map(a => {
       const id = it.book ? it.book.id : "";
       if (a === "open")     return '<button class="btn sm" data-fix="open" data-id="' + id + '">Open</button>';
       if (a === "openwish") return '<button class="btn sm" data-fix="openwish" data-id="' + id + '">Open</button>';
@@ -523,7 +532,20 @@
     const used = new Set(state.categories.map(c => c.color));
     $("#viewMeta").textContent = state.categories.length + " categories · " +
       (PALETTE.length - used.size) + " colours free";
-    $("#catsMeta").textContent = "Renaming a category renames it on every book and wishlist entry that uses it.";
+    $("#catsMeta").textContent = ro()
+      ? "" : "Renaming a category renames it on every book and wishlist entry that uses it.";
+    $("#btnAddCat").hidden = ro();
+
+    if (ro()) {
+      $("#cats").innerHTML = state.categories.map(c => {
+        const n = counts.get(c.name) || 0, w = wishCounts.get(c.name) || 0;
+        return '<div class="cat-row still" style="--c:' + hexOf(c.color) + '">' +
+          '<span class="bead"></span><span class="cat-name">' + esc(c.name) + "</span>" +
+          '<span class="colourpick still">' + esc(c.color || "") + "</span>" +
+          '<div class="n">' + n + (w ? '<span class="w">+' + w + "</span>" : "") + "</div></div>";
+      }).join("");
+      return;
+    }
 
     // 32 swatches on every row at once is a wall of colour; each row opens its
     // own picker instead, and closes when you have chosen.
@@ -557,9 +579,14 @@
     $("#drawerTitle").textContent = book
       ? (wish ? "Edit wanted book" : "Edit book")
       : (wish ? "Add to wishlist" : "Add book");
-    $("#btnDelete").hidden = !book;
+    $("#drawerTitle").textContent = ro() ? (book ? book.title : "Details") : $("#drawerTitle").textContent;
+    $("#btnDelete").hidden = ro() || !book;
     $("#btnDelete").textContent = wish ? "Remove" : "Delete";
-    $("#btnBought").hidden = !(book && wish);
+    $("#btnBought").hidden = ro() || !(book && wish);
+    $("#btnSave").hidden = ro();
+    $("#btnSuggest").hidden = ro();
+    $("#btnCancel").textContent = ro() ? "Close" : "Cancel";
+    $$("#drawer input, #drawer select, #drawer textarea").forEach(el => { el.disabled = ro(); });
     $("#fTitle").value = state.draft.title;
     $("#fAuthor").value = state.draft.author;
     $("#fLangIn").value = state.draft.language;
@@ -913,9 +940,10 @@
     const list = isList();
     $("#libControls").style.display = list ? "" : "none";
     $("#catFilters").style.display = list ? "" : "none";
-    $("#btnAdd").style.display = list ? "" : "none";
+    $("#btnAdd").style.display = list && !ro() ? "" : "none";
     $("#btnAdd").textContent = v === "wishlist" ? "Add to wishlist" : "Add book";
-    $("#btnAddFab").hidden = !list;
+    $("#btnAddFab").hidden = !list || ro();
+    $("#btnImport").hidden = ro();          // nothing for a guest to import into
     $("#q").placeholder = v === "wishlist"
       ? "Search the wishlist…" : "Search titles, authors, notes…";
     document.body.classList.toggle("wishing", v === "wishlist");
@@ -1026,8 +1054,8 @@
     }
 
     if (t.id === "btnMoreAuthors") { state.showAllAuthors = !state.showAllAuthors; renderInsights(); return; }
-    if (t.id === "btnAdd" || t.id === "btnAddFab") return openDrawer(null);
-    if (t.id === "btnSave") return saveDrawer();
+    if (t.id === "btnAdd" || t.id === "btnAddFab") { if (ro()) return; return openDrawer(null); }
+    if (t.id === "btnSave") { if (ro()) return; return saveDrawer(); }
     if (t.id === "btnBought") return moveToLibrary(state.editing, true);
     if (t.id === "btnCancel" || t.id === "drawerClose" || t.id === "scrim") return closeDrawer();
     if (t.id === "btnDelete") {
@@ -1043,7 +1071,7 @@
     if (t.id === "btnXlsx") return exportXlsx();
     if (t.id === "btnCsv") return exportCsv();
     if (t.id === "btnJson") return exportJson();
-    if (t.id === "btnImport") return $("#fileInput").click();
+    if (t.id === "btnImport") { if (ro()) return; return $("#fileInput").click(); }
 
     const sortBtn = closest("[data-sort]");
     if (sortBtn) {
@@ -1094,7 +1122,7 @@
       return;
     }
     if (e.key === "/") { e.preventDefault(); if (!isList()) setView("library"); $("#q").focus(); }
-    if (e.key.toLowerCase() === "n") { e.preventDefault(); if (isList()) openDrawer(null); }
+    if (e.key.toLowerCase() === "n" && !ro()) { e.preventDefault(); if (isList()) openDrawer(null); }
   });
 
   document.addEventListener("keypress", (e) => {
@@ -1110,7 +1138,7 @@
     if (document.visibilityState === "hidden" && Store.dirty) Store.flush();
   });
   window.addEventListener("beforeunload", (e) => {
-    if (Store.dirty || Store.inflight) { e.preventDefault(); e.returnValue = ""; }
+    if (!ro() && (Store.dirty || Store.inflight)) { e.preventDefault(); e.returnValue = ""; }
   });
 
   /* ── go ───────────────────────────────────────────────────────────── */
@@ -1126,9 +1154,12 @@
   }
 
   window.Bibliotheca = {
-    boot(doc) {
+    boot(doc, opts) {
+      state.readOnly = !!(opts && opts.readOnly);
+      document.body.classList.toggle("readonly", state.readOnly);
       adopt(doc);
-      if (needsUpgrade(doc)) {
+      setView(state.view);      // applies the per-view visibility rules from the start
+      if (!state.readOnly && needsUpgrade(doc)) {
         Store.upgrade(payload(), "Bibliotheca: drop ratings, add the wishlist");
       }
       Store.on("data", (fresh, info) => {
@@ -1152,6 +1183,7 @@
     adopt: adopt,
     setView: setView,
     state: state,
+    readOnly: ro,
     PALETTE: PALETTE,
   };
 })();

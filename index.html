@@ -12,8 +12,8 @@
 <link rel="apple-touch-icon" href="icon.svg">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="preload" href="fonts/literata-400-latin.woff2" as="font" type="font/woff2" crossorigin>
-<link rel="stylesheet" href="fonts.css?v=2">
-<link rel="stylesheet" href="app.css?v=2">
+<link rel="stylesheet" href="fonts.css?v=3">
+<link rel="stylesheet" href="app.css?v=3">
 </head>
 <body class="gated">
 
@@ -46,6 +46,16 @@
       <div class="gate-msg" id="unlockMsg" hidden></div>
       <button class="btn primary block" id="btnUnlock" type="submit">Unlock</button>
       <p class="gate-fine">The books are decrypted here, in this browser. GitHub only ever holds the sealed file.</p>
+
+      <div class="gate-or" id="guestDoor" hidden><span>or</span></div>
+      <button class="btn block" id="btnGuest" type="button" hidden>Enter as guest</button>
+      <label class="field" id="guestPassField" hidden>
+        <span>Guest passphrase</span>
+        <input type="text" id="guestPass" autocapitalize="off" autocorrect="off" spellcheck="false"
+               placeholder="six words, hyphenated">
+      </label>
+      <p class="gate-fine" id="guestNote" hidden>Guests can read the shelf and nothing else — no adding,
+        no editing, no settings.</p>
     </form>
 
     <!-- first run -->
@@ -120,6 +130,12 @@
 </div>
 
 <!-- ══ the shelf ══════════════════════════════════════════════════════ -->
+<div class="guestbar" id="guestbar" hidden>
+  <span class="dot"></span>
+  <span>Viewing as a guest — read only</span>
+  <button class="linky" id="btnGuestOut">Sign in</button>
+</div>
+
 <div class="shell">
   <nav class="rail">
     <div class="brand">
@@ -312,6 +328,23 @@
       anyone holding this unlocked device can read the shelf.</p>
 
     <hr>
+    <h4>Guest access</h4>
+    <label class="toggle"><input type="checkbox" id="setGuest"> Let anyone with the link read the shelf</label>
+    <p class="gate-fine">Publishes a second, read-only copy that opens without your password. A guest can
+      read everything and change nothing — their browser never holds a write token.</p>
+    <div id="guestOpts" hidden>
+      <label class="toggle"><input type="checkbox" id="setGuestOneClick" checked> One click, no passphrase</label>
+      <p class="gate-fine">On, the passphrase is published beside the copy so the button just works — which
+        means anyone who reads the page source can read the shelf. It stays out of GitHub code search and
+        out of search engines, but it is obscurity, not secrecy. Off, guests must type the passphrase below,
+        and it is a real lock.</p>
+      <div class="field">
+        <span>Guest passphrase</span>
+        <code class="passout" id="setGuestPass">—</code>
+      </div>
+    </div>
+
+    <hr>
     <form id="pwForm">
       <h4>Change password</h4>
       <label class="field"><span>Current password</span>
@@ -344,9 +377,9 @@
 
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
-<script src="config.js?v=2"></script>
-<script src="store.js?v=2"></script>
-<script src="app.js?v=2"></script>
-<script src="gate.js?v=2"></script>
+<script src="config.js?v=3"></script>
+<script src="store.js?v=3"></script>
+<script src="app.js?v=3"></script>
+<script src="gate.js?v=3"></script>
 </body>
 </html>

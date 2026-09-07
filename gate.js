@@ -98,17 +98,32 @@
     if (where === "needs-setup") return show("setup");
     show("unlock");
     setTimeout(() => $("#pw").focus(), 80);
+
+    // Is the guest door open, and does it need a passphrase?
+    try {
+      const g = await Store.guestStatus();
+      if (g.on) {
+        $("#guestDoor").hidden = false;
+        $("#btnGuest").hidden = false;
+        $("#guestNote").hidden = false;
+        $("#guestPassField").hidden = g.oneClick;
+        guestNeedsPass = !g.oneClick;
+      }
+    } catch (e) { /* no guest door, or no way to ask — leave it hidden */ }
   }
+
+  let guestNeedsPass = false;
 
   function fail(msg) {
     show("fail");
     $("#failMsg").textContent = msg;
   }
 
-  function enter(doc) {
+  function enter(doc, opts) {
     hideGate();
-    window.Bibliotheca.boot(doc);
+    window.Bibliotheca.boot(doc, opts);
     document.body.classList.remove("gated");
+    $("#guestbar").hidden = !(opts && opts.readOnly);
   }
 
   function askConfig() {
@@ -135,6 +150,25 @@
       $("#pw").select();
     } finally { busy(btn, false); }
   });
+
+  $("#btnGuest").addEventListener("click", async () => {
+    const btn = $("#btnGuest");
+    say("#unlockMsg", "");
+    if (guestNeedsPass && !$("#guestPass").value.trim()) {
+      $("#guestPassField").hidden = false;
+      $("#guestPass").focus();
+      return say("#unlockMsg", "This library asks guests for a passphrase.", "warn");
+    }
+    busy(btn, true, "Opening…");
+    try {
+      const doc = await Store.enterAsGuest($("#guestPass").value.trim() || null);
+      enter(doc, { readOnly: true });
+    } catch (err) {
+      say("#unlockMsg", err.message || "Couldn't open the guest copy.", "bad");
+    } finally { busy(btn, false); }
+  });
+
+  $("#btnGuestOut").addEventListener("click", () => location.reload());
 
   /* ── setup ────────────────────────────────────────────────────────── */
 
@@ -222,6 +256,7 @@
     $("#setHistory").href = "https://github.com/" + c.owner + "/" + c.dataRepo +
       "/commits/" + c.branch + "/" + c.dataPath;
     $("#setRemember").checked = Store.isRemembered();
+    paintGuest();
     settings.classList.add("open");
     $("#scrim").classList.add("open");
     document.body.classList.add("no-scroll");
@@ -235,7 +270,10 @@
 
   document.addEventListener("click", (e) => {
     const hit = (id) => e.target.closest ? e.target.closest("#" + id) : null;
-    if (hit("btnSettings")) return openSettings();
+    if (hit("btnSettings")) {
+      if (Store.guest) return window.Bibliotheca.toast("Guests have nothing to configure.");
+      return openSettings();
+    }
     if (hit("settingsClose")) return closeSettings();
     if (e.target.id === "scrim" && settings.classList.contains("open")) return closeSettings();
     if (hit("btnSignOut")) {
@@ -244,6 +282,48 @@
       return;
     }
     if (hit("btnSyncNow")) { Store.poll(); window.Bibliotheca.toast("Checking GitHub…"); return; }
+  });
+
+  function paintGuest() {
+    const on = !!Store.guestPass;
+    $("#setGuest").checked = on;
+    $("#guestOpts").hidden = !on;
+    $("#setGuestOneClick").checked = Store.guestOneClick !== false;
+    $("#setGuestPass").textContent = Store.guestPass || "—";
+  }
+
+  $("#setGuest").addEventListener("change", async (e) => {
+    const on = e.target.checked;
+    say("#setMsg", "");
+    if (!on && !confirm("Close the guest door? The read-only copy is deleted from the repository.")) {
+      e.target.checked = true; return;
+    }
+    e.target.disabled = true;
+    try {
+      await Store.setGuestAccess(on, window.Bibliotheca.payload(), $("#setGuestOneClick").checked);
+      paintGuest();
+      say("#setMsg", on
+        ? "Guest access is open. Anyone with the link can read the shelf."
+        : "Guest access is closed.", "good");
+    } catch (err) {
+      e.target.checked = !on;
+      say("#setMsg", err.message || "Couldn't change guest access.", "bad");
+    } finally { e.target.disabled = false; }
+  });
+
+  $("#setGuestOneClick").addEventListener("change", async (e) => {
+    say("#setMsg", "");
+    e.target.disabled = true;
+    try {
+      await Store.setGuestAccess(true, window.Bibliotheca.payload(), e.target.checked);
+      paintGuest();
+      say("#setMsg", e.target.checked
+        ? "Guests get in with one click."
+        : "Guests now need the passphrase above. Hand it out yourself.", "good");
+    } catch (err) {
+      e.target.checked = !e.target.checked;
+      say("#setMsg", err.message || "Couldn't change that.", "bad");
+    } finally { e.target.disabled = false; }
   });
 
   $("#setRemember").addEventListener("change", async (e) => {
